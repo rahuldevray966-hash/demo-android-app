@@ -27,6 +27,24 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
+      - name: Authenticate with pCloudy
+        env:
+          PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
+          PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
+        run: |
+          HTTP_CODE=$(curl -sS -o pcloudy-auth.json -w "%{http_code}" \
+            -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
+            "https://device.pcloudy.com/api/access")
+
+          echo "pCloudy authentication HTTP status: ${HTTP_CODE}"
+
+          if [ "${HTTP_CODE}" != "200" ]; then
+            echo "pCloudy authentication failed"
+            exit 1
+          fi
+
+          echo "pCloudy authentication successful"
+
       - name: Build APK
         run: ./gradlew assembleDebug
 
