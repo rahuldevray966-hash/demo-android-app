@@ -11,7 +11,157 @@ on:
 
 jobs:
   build:
-    name: Build Android App
+    name: Build Android Appname: Android CI
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-upload:
+    name: Build and Upload Android App
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ----------------------------------------
+      # 1. Checkout source code
+      # ----------------------------------------
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+
+      # ----------------------------------------
+      # 2. Setup Java 22
+      # ----------------------------------------
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '22'
+
+
+      # ----------------------------------------
+      # 3. Make Gradle executable
+      # ----------------------------------------
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+
+      # ----------------------------------------
+      # 4. Authenticate with pCloudy
+      # ----------------------------------------
+      - name: Authenticate with pCloudy
+        env:
+          PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
+          PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
+
+        run: |
+          HTTP_CODE=$(curl -sS \
+            -o pcloudy-auth.json \
+            -w "%{http_code}" \
+            -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
+            "https://device.pcloudy.com/api/access")
+
+          echo "pCloudy authentication HTTP status: ${HTTP_CODE}"
+
+          if [ "${HTTP_CODE}" != "200" ]; then
+            echo "pCloudy authentication failed"
+            exit 1
+          fi
+
+          echo "pCloudy authentication successful"
+
+
+      # ----------------------------------------
+      # 5. Build Android APK
+      # ----------------------------------------
+      - name: Build APK
+        run: ./gradlew assembleDebug
+
+
+      # ----------------------------------------
+      # 6. Verify APK
+      # ----------------------------------------
+      - name: Verify APK
+        run: |
+          echo "Checking generated APK..."
+
+          ls -lh app/build/outputs/apk/debug/
+
+          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "APK was not generated"
+            exit 1
+          fi
+
+          echo "APK found:"
+          echo "$APK"
+
+
+      # ----------------------------------------
+      # 7. Upload APK to pCloudy
+      # ----------------------------------------
+      - name: Upload APK to pCloudy
+        env:
+          PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
+          PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
+
+        run: |
+
+          echo "Getting pCloudy access token..."
+
+          PCLOUDY_TOKEN=$(curl -sS \
+            -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
+            "https://device.pcloudy.com/api/access" \
+            | jq -r '.[].token')
+
+          if [ -z "$PCLOUDY_TOKEN" ] || [ "$PCLOUDY_TOKEN" = "null" ]; then
+            echo "Failed to get pCloudy access token"
+            exit 1
+          fi
+
+          echo "pCloudy access token generated successfully"
+
+
+          echo "Uploading APK to pCloudy..."
+
+          HTTP_CODE=$(curl -sS \
+            -o pcloudy-upload.json \
+            -w "%{http_code}" \
+            -X POST \
+            -F "file=@app/build/outputs/apk/debug/app-debug.apk" \
+            -F "source_type=raw" \
+            -F "token=${PCLOUDY_TOKEN}" \
+            -F "filter=all" \
+            "https://device.pcloudy.com/api/upload_file")
+
+          echo "pCloudy upload HTTP status: ${HTTP_CODE}"
+
+          if [ "${HTTP_CODE}" != "200" ]; then
+            echo "pCloudy APK upload failed"
+            echo "Response:"
+            cat pcloudy-upload.json
+            exit 1
+          fi
+
+          echo "APK uploaded to pCloudy successfully"
+
+
+      # ----------------------------------------
+      # 8. Upload APK to GitHub Artifact
+      # ----------------------------------------
+      - name: Upload APK to GitHub Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
     runs-on: ubuntu-latest
 
     steps:
