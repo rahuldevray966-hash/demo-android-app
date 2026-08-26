@@ -1,4 +1,4 @@
-name: Build, Firebase Distribution and pCloud Upload
+name: Build, Firebase and pCloud
 
 on:
   push:
@@ -7,9 +7,12 @@ on:
 
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-firebase-pcloud:
-    name: Build APK, Upload to Firebase and pCloud
+    name: Build APK → Firebase → pCloud
     runs-on: ubuntu-latest
 
     steps:
@@ -39,28 +42,28 @@ jobs:
 
 
       # ----------------------------------------
-      # 4. Build NEW Android APK
+      # 4. Build NEW APK
       # ----------------------------------------
       - name: Build APK
         run: ./gradlew assembleDebug
 
 
       # ----------------------------------------
-      # 5. Verify generated APK
+      # 5. Verify APK
       # ----------------------------------------
       - name: Verify APK
         run: |
-          echo "Checking generated APK..."
+          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
 
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          echo "Checking APK..."
 
-          if [ ! -f "$APK" ]; then
-            echo "APK was not generated"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: APK was not generated"
             exit 1
           fi
 
-          echo "APK found:"
-          ls -lh "$APK"
+          echo "APK generated successfully:"
+          ls -lh "$APK_PATH"
 
 
       # ----------------------------------------
@@ -85,30 +88,30 @@ jobs:
       - name: Upload APK to Firebase App Distribution
         env:
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+          FIREBASE_TESTER_EMAIL: ${{ secrets.FIREBASE_TESTER_EMAIL }}
 
         run: |
-          echo "Uploading new APK to Firebase App Distribution..."
+          echo "Uploading NEW APK to Firebase..."
 
           firebase appdistribution:distribute \
             app/build/outputs/apk/debug/app-debug.apk \
             --app "$FIREBASE_APP_ID" \
-            --release-notes "Automated GitHub Actions build" \
-            --testers "rahuldevray966@gmail.com"
+            --release-notes "GitHub Actions build - $GITHUB_SHA" \
+            --testers "$FIREBASE_TESTER_EMAIL"
 
-          echo "New APK uploaded to Firebase successfully"
+          echo "Firebase upload completed successfully"
 
 
       # ----------------------------------------
       # 9. Get Firebase access token
       # ----------------------------------------
       - name: Get Firebase access token
-        id: firebase-auth
+        id: firebase-token
         run: |
           ACCESS_TOKEN=$(gcloud auth print-access-token)
 
           if [ -z "$ACCESS_TOKEN" ]; then
-            echo "Failed to get Firebase access token"
+            echo "ERROR: Could not get Firebase access token"
             exit 1
           fi
 
@@ -125,10 +128,9 @@ jobs:
         env:
           FIREBASE_PROJECT_NUMBER: ${{ secrets.FIREBASE_PROJECT_NUMBER }}
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
-          ACCESS_TOKEN: ${{ steps.firebase-auth.outputs.access_token }}
+          ACCESS_TOKEN: ${{ steps.firebase-token.outputs.access_token }}
 
         run: |
-
           echo "Getting latest Firebase release..."
 
           RESPONSE=$(curl -sS \
@@ -138,65 +140,64 @@ jobs:
 
           echo "$RESPONSE" > firebase-release.json
 
-          echo "Firebase release response received"
+          echo "Firebase API response:"
+          cat firebase-release.json
 
           DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.releases[0].binaryDownloadUri')
 
           if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
-            echo "No Firebase release download URL found"
-            cat firebase-release.json
+            echo "ERROR: No Firebase APK download URL found"
             exit 1
           fi
 
-          echo "Latest Firebase release found"
+          echo "Firebase release found"
 
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
 
 
       # ----------------------------------------
-      # 11. Download latest APK from Firebase
+      # 11. Download APK from Firebase
       # ----------------------------------------
       - name: Download APK from Firebase
         env:
           DOWNLOAD_URL: ${{ steps.firebase-release.outputs.download_url }}
 
         run: |
-
           echo "Downloading APK from Firebase..."
 
           curl -fL \
+            --retry 3 \
+            --retry-delay 2 \
             -o firebase-app.apk \
             "$DOWNLOAD_URL"
 
           if [ ! -s firebase-app.apk ]; then
-            echo "Firebase APK download failed"
+            echo "ERROR: Firebase APK download failed"
             exit 1
           fi
 
-          echo "Firebase APK downloaded successfully"
-
+          echo "Firebase APK downloaded successfully:"
           ls -lh firebase-app.apk
 
 
       # ----------------------------------------
-      # 12. Verify Firebase APK
+      # 12. Verify downloaded APK
       # ----------------------------------------
       - name: Verify Firebase APK
         run: |
-
-          echo "Verifying Firebase APK..."
+          echo "Verifying downloaded APK..."
 
           file firebase-app.apk
 
           APK_SIZE=$(stat -c%s firebase-app.apk)
 
           if [ "$APK_SIZE" -le 0 ]; then
-            echo "APK file is empty"
+            echo "ERROR: APK file is empty"
             exit 1
           fi
 
           echo "APK size: ${APK_SIZE} bytes"
-          echo "Firebase APK verification successful"
+          echo "APK verification successful"
 
 
       # ----------------------------------------
@@ -208,7 +209,6 @@ jobs:
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
         run: |
-
           echo "Authenticating with pCloud..."
 
           HTTP_CODE=$(curl -sS \
@@ -219,8 +219,8 @@ jobs:
 
           echo "pCloud authentication HTTP status: ${HTTP_CODE}"
 
-          if [ "${HTTP_CODE}" != "200" ]; then
-            echo "pCloud authentication failed"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: pCloud authentication failed"
             cat pcloudy-auth.json
             exit 1
           fi
@@ -232,13 +232,12 @@ jobs:
       # 14. Get pCloud access token
       # ----------------------------------------
       - name: Get pCloud access token
-        id: pcloud-auth
+        id: pcloud-token
         env:
           PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
         run: |
-
           echo "Getting pCloud access token..."
 
           PCLOUDY_TOKEN=$(curl -sS \
@@ -247,7 +246,7 @@ jobs:
             | jq -r '.[].token')
 
           if [ -z "$PCLOUDY_TOKEN" ] || [ "$PCLOUDY_TOKEN" = "null" ]; then
-            echo "Failed to get pCloud access token"
+            echo "ERROR: Failed to get pCloud access token"
             exit 1
           fi
 
@@ -261,11 +260,10 @@ jobs:
       # ----------------------------------------
       - name: Upload APK to pCloud
         env:
-          PCLOUDY_TOKEN: ${{ steps.pcloud-auth.outputs.token }}
+          PCLOUDY_TOKEN: ${{ steps.pcloud-token.outputs.token }}
 
         run: |
-
-          echo "Uploading Firebase APK to pCloud..."
+          echo "Uploading APK to pCloud..."
 
           HTTP_CODE=$(curl -sS \
             -o pcloudy-upload.json \
@@ -279,14 +277,14 @@ jobs:
 
           echo "pCloud upload HTTP status: ${HTTP_CODE}"
 
-          if [ "${HTTP_CODE}" != "200" ]; then
-            echo "pCloud APK upload failed"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: pCloud APK upload failed"
             echo "Response:"
             cat pcloudy-upload.json
             exit 1
           fi
 
-          echo "Firebase APK uploaded to pCloud successfully"
+          echo "APK uploaded to pCloud successfully"
 
 
       # ----------------------------------------
@@ -295,5 +293,6 @@ jobs:
       - name: Upload APK to GitHub Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: firebase-apk
+          name: android-firebase-apk
           path: firebase-app.apk
+          if-no-files-found: error
