@@ -1,75 +1,112 @@
-name: Android CI
+name: Firebase to pCloud
 
 on:
+  workflow_dispatch:
+
   push:
     branches:
       - main
 
-  pull_request:
-    branches:
-      - main
-
 jobs:
-  build-and-upload:
-    name: Build and Upload Android App
+  firebase-to-pcloud:
+    name: Download APK from Firebase and Upload to pCloud
     runs-on: ubuntu-latest
 
     steps:
 
       # ----------------------------------------
-      # 1. Checkout source code
+      # 1. Checkout repository
       # ----------------------------------------
       - name: Checkout source code
         uses: actions/checkout@v4
 
 
       # ----------------------------------------
-      # 2. Setup Java 22
+      # 2. Authenticate with Google / Firebase
       # ----------------------------------------
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - name: Authenticate with Firebase
+        uses: google-github-actions/auth@v2
         with:
-          distribution: temurin
-          java-version: '22'
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
 
 
       # ----------------------------------------
-      # 3. Make Gradle executable
+      # 3. Get Firebase access token
       # ----------------------------------------
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
-
-
-      # ----------------------------------------
-      # 4. Authenticate with pCloudy
-      # ----------------------------------------
-      - name: Authenticate with pCloudy
-        env:
-          PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
-          PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
-
+      - name: Get Firebase access token
+        id: firebase-auth
         run: |
-          HTTP_CODE=$(curl -sS \
-            -o pcloudy-auth.json \
-            -w "%{http_code}" \
-            -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
-            "https://device.pcloudy.com/api/access")
+          ACCESS_TOKEN=$(gcloud auth print-access-token)
 
-          echo "pCloudy authentication HTTP status: ${HTTP_CODE}"
-
-          if [ "${HTTP_CODE}" != "200" ]; then
-            echo "pCloudy authentication failed"
+          if [ -z "$ACCESS_TOKEN" ]; then
+            echo "Failed to get Firebase access token"
             exit 1
           fi
 
-          echo "pCloudy authentication successful"
+          echo "Firebase authentication successful"
+
+          echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
 
 
       # ----------------------------------------
-      # 5. Build Android APK
+      # 4. Get latest Firebase release
       # ----------------------------------------
-      - name: Build APK
-        run: ./gradlew assembleDebug
+      - name: Get latest Firebase release
+        id: firebase-release
+        env:
+          FIREBASE_PROJECT_NUMBER: ${{ secrets.FIREBASE_PROJECT_NUMBER }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          ACCESS_TOKEN: ${{ steps.firebase-auth.outputs.access_token }}
+
+        run: |
+
+          echo "Getting latest Firebase App Distribution release..."
+
+          RESPONSE=$(curl -sS \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "Accept: application/json" \
+            "https://firebaseappdistribution.googleapis.com/v1/projects/${FIREBASE_PROJECT_NUMBER}/apps/${FIREBASE_APP_ID}/releases?pageSize=1&orderBy=createTime%20desc")
+
+          echo "$RESPONSE" > firebase-release.json
+
+          echo "Firebase API response:"
+          cat firebase-release.json
+
+          DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.releases[0].binaryDownloadUri')
+
+          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+            echo "No Firebase release download URL found"
+            exit 1
+          fi
+
+          echo "Latest Firebase release found"
+
+          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+
+
+      # ----------------------------------------
+      # 5. Download APK from Firebase
+      # ----------------------------------------
+      - name: Download APK from Firebase
+        env:
+          DOWNLOAD_URL: ${{ steps.firebase-release.outputs.download_url }}
+
+        run: |
+
+          echo "Downloading APK from Firebase..."
+
+          curl -fL \
+            -o firebase-app.apk \
+            "$DOWNLOAD_URL"
+
+          if [ ! -s firebase-app.apk ]; then
+            echo "Firebase APK download failed"
+            exit 1
+          fi
+
+          echo "Firebase APK downloaded successfully"
+
+          ls -lh firebase-app.apk
 
 
       # ----------------------------------------
@@ -77,32 +114,65 @@ jobs:
       # ----------------------------------------
       - name: Verify APK
         run: |
-          echo "Checking generated APK..."
 
-          ls -lh app/build/outputs/apk/debug/
+          echo "Verifying Firebase APK..."
 
-          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          file firebase-app.apk
 
-          if [ -z "$APK" ]; then
-            echo "APK was not generated"
+          APK_SIZE=$(stat -c%s firebase-app.apk)
+
+          if [ "$APK_SIZE" -le 0 ]; then
+            echo "APK file is empty"
             exit 1
           fi
 
-          echo "APK found:"
-          echo "$APK"
+          echo "APK size: ${APK_SIZE} bytes"
+
+          echo "APK verification successful"
 
 
       # ----------------------------------------
-      # 7. Upload APK to pCloudy
+      # 7. Authenticate with pCloud
       # ----------------------------------------
-      - name: Upload APK to pCloudy
+      - name: Authenticate with pCloud
         env:
           PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
         run: |
 
-          echo "Getting pCloudy access token..."
+          echo "Authenticating with pCloud..."
+
+          HTTP_CODE=$(curl -sS \
+            -o pcloudy-auth.json \
+            -w "%{http_code}" \
+            -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
+            "https://device.pcloudy.com/api/access")
+
+          echo "pCloud authentication HTTP status: ${HTTP_CODE}"
+
+          if [ "${HTTP_CODE}" != "200" ]; then
+            echo "pCloud authentication failed"
+            echo "Response:"
+            cat pcloudy-auth.json
+            exit 1
+          fi
+
+          echo "pCloud authentication successful"
+
+
+      # ----------------------------------------
+      # 8. Get pCloud access token
+      # ----------------------------------------
+      - name: Get pCloud access token
+        id: pcloud-auth
+        env:
+          PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
+          PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
+
+        run: |
+
+          echo "Getting pCloud access token..."
 
           PCLOUDY_TOKEN=$(curl -sS \
             -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
@@ -110,42 +180,53 @@ jobs:
             | jq -r '.[].token')
 
           if [ -z "$PCLOUDY_TOKEN" ] || [ "$PCLOUDY_TOKEN" = "null" ]; then
-            echo "Failed to get pCloudy access token"
+            echo "Failed to get pCloud access token"
             exit 1
           fi
 
-          echo "pCloudy access token generated successfully"
+          echo "pCloud access token generated successfully"
+
+          echo "token=$PCLOUDY_TOKEN" >> "$GITHUB_OUTPUT"
 
 
-          echo "Uploading APK to pCloudy..."
+      # ----------------------------------------
+      # 9. Upload Firebase APK to pCloud
+      # ----------------------------------------
+      - name: Upload APK to pCloud
+        env:
+          PCLOUDY_TOKEN: ${{ steps.pcloud-auth.outputs.token }}
+
+        run: |
+
+          echo "Uploading Firebase APK to pCloud..."
 
           HTTP_CODE=$(curl -sS \
             -o pcloudy-upload.json \
             -w "%{http_code}" \
             -X POST \
-            -F "file=@app/build/outputs/apk/debug/app-debug.apk" \
+            -F "file=@firebase-app.apk" \
             -F "source_type=raw" \
             -F "token=${PCLOUDY_TOKEN}" \
             -F "filter=all" \
             "https://device.pcloudy.com/api/upload_file")
 
-          echo "pCloudy upload HTTP status: ${HTTP_CODE}"
+          echo "pCloud upload HTTP status: ${HTTP_CODE}"
 
           if [ "${HTTP_CODE}" != "200" ]; then
-            echo "pCloudy APK upload failed"
+            echo "pCloud APK upload failed"
             echo "Response:"
             cat pcloudy-upload.json
             exit 1
           fi
 
-          echo "APK uploaded to pCloudy successfully"
+          echo "Firebase APK uploaded to pCloud successfully"
 
 
       # ----------------------------------------
-      # 8. Upload APK to GitHub Artifact
+      # 10. Upload APK as GitHub Artifact
       # ----------------------------------------
       - name: Upload APK to GitHub Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: firebase-apk
+          path: firebase-app.apk
