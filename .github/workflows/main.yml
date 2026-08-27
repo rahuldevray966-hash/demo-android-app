@@ -1,4 +1,4 @@
-name: Build → Firebase → pCloudy
+name: Build, Firebase and pCloudy Multi Device
 
 on:
   push:
@@ -11,103 +11,100 @@ permissions:
   contents: read
 
 jobs:
-
   build-firebase-pcloudy:
-
-    name: Build APK → Firebase → pCloudy
+    name: Build APK → Firebase → pCloudy Multi Device
     runs-on: ubuntu-latest
+
+    env:
+      # --------------------------------------------------
+      # pCloudy devices to test sequentially
+      # Change/add device names here
+      # --------------------------------------------------
+      PCLOUDY_DEVICES: "Pixel7,GalaxyS215G,Mi10,GalaxyS25"
+
+      # How many minutes to reserve each device
+      PCLOUDY_DURATION: "10"
 
     steps:
 
-      # ============================================================
+      # ==================================================
       # 1. Checkout
-      # ============================================================
-
+      # ==================================================
       - name: Checkout source code
         uses: actions/checkout@v4
 
 
-      # ============================================================
+      # ==================================================
       # 2. Setup Java
-      # ============================================================
-
-      - name: Setup Java 22
+      # ==================================================
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '22'
 
 
-      # ============================================================
-      # 3. Gradle permission
-      # ============================================================
-
+      # ==================================================
+      # 3. Make Gradle executable
+      # ==================================================
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
 
-      # ============================================================
-      # 4. Build NEW APK
-      # ============================================================
-
+      # ==================================================
+      # 4. Build APK
+      # ==================================================
       - name: Build APK
         run: |
-          echo "Building new APK..."
-
+          echo "Building Android APK..."
           ./gradlew assembleDebug
 
-          echo "APK build completed."
 
-
-      # ============================================================
+      # ==================================================
       # 5. Verify APK
-      # ============================================================
-
+      # ==================================================
       - name: Verify APK
         run: |
           APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+
+          echo "Checking APK..."
 
           if [ ! -f "$APK_PATH" ]; then
             echo "ERROR: APK was not generated"
             exit 1
           fi
 
-          echo "APK generated:"
+          echo "APK generated successfully:"
           ls -lh "$APK_PATH"
 
 
-      # ============================================================
-      # 6. Firebase Authentication
-      # ============================================================
-
+      # ==================================================
+      # 6. Authenticate with Firebase
+      # ==================================================
       - name: Authenticate with Firebase
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
 
 
-      # ============================================================
+      # ==================================================
       # 7. Install Firebase CLI
-      # ============================================================
-
+      # ==================================================
       - name: Install Firebase CLI
         run: |
           npm install -g firebase-tools
 
-          firebase --version
 
-
-      # ============================================================
-      # 8. Upload NEW APK to Firebase
-      # ============================================================
-
-      - name: Upload APK to Firebase
+      # ==================================================
+      # 8. Upload APK to Firebase
+      # ==================================================
+      - name: Upload APK to Firebase App Distribution
         env:
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
           FIREBASE_TESTER_EMAIL: ${{ secrets.FIREBASE_TESTER_EMAIL }}
 
         run: |
-          echo "Uploading NEW APK to Firebase..."
+          echo "Uploading APK to Firebase..."
 
           firebase appdistribution:distribute \
             app/build/outputs/apk/debug/app-debug.apk \
@@ -115,34 +112,30 @@ jobs:
             --release-notes "GitHub Actions build - $GITHUB_SHA" \
             --testers "$FIREBASE_TESTER_EMAIL"
 
-          echo "Firebase upload completed."
+          echo "Firebase upload completed successfully"
 
 
-      # ============================================================
-      # 9. Get Firebase Access Token
-      # ============================================================
-
+      # ==================================================
+      # 9. Get Firebase access token
+      # ==================================================
       - name: Get Firebase access token
         id: firebase-token
         run: |
           ACCESS_TOKEN=$(gcloud auth print-access-token)
 
           if [ -z "$ACCESS_TOKEN" ]; then
-            echo "ERROR: Firebase access token not generated"
+            echo "ERROR: Could not get Firebase access token"
             exit 1
           fi
 
-          echo "::add-mask::$ACCESS_TOKEN"
+          echo "Firebase authentication successful"
 
           echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
 
-          echo "Firebase authentication successful."
 
-
-      # ============================================================
-      # 10. Get Latest Firebase Release
-      # ============================================================
-
+      # ==================================================
+      # 10. Get latest Firebase release
+      # ==================================================
       - name: Get latest Firebase release
         id: firebase-release
         env:
@@ -154,29 +147,30 @@ jobs:
           echo "Getting latest Firebase release..."
 
           RESPONSE=$(curl -sS \
-            --fail-with-body \
             -H "Authorization: Bearer ${ACCESS_TOKEN}" \
             -H "Accept: application/json" \
             "https://firebaseappdistribution.googleapis.com/v1/projects/${FIREBASE_PROJECT_NUMBER}/apps/${FIREBASE_APP_ID}/releases?pageSize=1&orderBy=createTime%20desc")
 
           echo "$RESPONSE" > firebase-release.json
 
+          echo "Firebase release response received"
+
           DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.releases[0].binaryDownloadUri')
 
           if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
-            echo "ERROR: Firebase APK download URL not found"
+            echo "ERROR: No Firebase APK download URL found"
+            cat firebase-release.json
             exit 1
           fi
 
+          echo "Firebase release found"
+
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
 
-          echo "Latest Firebase release found."
 
-
-      # ============================================================
+      # ==================================================
       # 11. Download APK from Firebase
-      # ============================================================
-
+      # ==================================================
       - name: Download APK from Firebase
         env:
           DOWNLOAD_URL: ${{ steps.firebase-release.outputs.download_url }}
@@ -195,352 +189,79 @@ jobs:
             exit 1
           fi
 
-          echo "Firebase APK downloaded:"
+          echo "Firebase APK downloaded successfully:"
           ls -lh firebase-app.apk
 
 
-      # ============================================================
+      # ==================================================
       # 12. Verify downloaded APK
-      # ============================================================
-
+      # ==================================================
       - name: Verify Firebase APK
         run: |
-          echo "Verifying APK..."
+          echo "Verifying downloaded APK..."
 
           file firebase-app.apk
 
           APK_SIZE=$(stat -c%s firebase-app.apk)
 
           if [ "$APK_SIZE" -le 0 ]; then
-            echo "ERROR: APK is empty"
+            echo "ERROR: APK file is empty"
             exit 1
           fi
 
           echo "APK size: ${APK_SIZE} bytes"
+          echo "APK verification successful"
 
-          echo "APK verification successful."
 
-
-      # ============================================================
+      # ==================================================
       # 13. Authenticate with pCloudy
-      # ============================================================
-
+      # ==================================================
       - name: Authenticate with pCloudy
         id: pcloudy-auth
-
         env:
           PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
         run: |
-          set -e
-
           echo "Authenticating with pCloudy..."
 
-          HTTP_CODE=$(curl -sS \
-            -o pcloudy-auth.json \
-            -w "%{http_code}" \
+          RESPONSE=$(curl -sS \
             -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
             "https://device.pcloudy.com/api/access")
 
-          echo "pCloudy authentication HTTP status: ${HTTP_CODE}"
+          echo "$RESPONSE" > pcloudy-auth.json
 
-          if [ "${HTTP_CODE}" != "200" ]; then
-            echo "ERROR: pCloudy authentication failed"
-            exit 1
-          fi
+          echo "pCloudy authentication response received"
 
-          # Expected response:
-          #
+          # Current pCloudy response:
           # {
           #   "result": {
-          #     "token": "xxxxx",
+          #     "token": "...",
           #     "code": 200
           #   }
           # }
 
-          TOKEN=$(python3 - <<'PY'
-          import json
-          import sys
+          TOKEN=$(echo "$RESPONSE" | jq -r '.result.token // empty')
 
-          with open("pcloudy-auth.json", "r") as f:
-              data = json.load(f)
-
-          token = data.get("result", {}).get("token")
-
-          if not token:
-              print("ERROR: pCloudy token not found", file=sys.stderr)
-              sys.exit(1)
-
-          print(token)
-          PY
-          )
-
-          if [ -z "${TOKEN}" ]; then
-            echo "ERROR: Empty pCloudy token"
+          if [ -z "$TOKEN" ]; then
+            echo "ERROR: Could not extract pCloudy token"
+            cat pcloudy-auth.json
             exit 1
           fi
 
-          # Never expose token in GitHub logs.
-          echo "::add-mask::${TOKEN}"
+          echo "pCloudy authentication successful"
 
-          echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
-
-          echo "pCloudy authentication successful."
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
 
-      # ============================================================
-      # 14. Get Available Android Devices
-      # ============================================================
-
-      - name: Get available Android devices
-        id: pcloudy-devices
-
-        env:
-          PCLOUDY_TOKEN: ${{ steps.pcloudy-auth.outputs.token }}
-
-        run: |
-          set -e
-
-          echo "Getting available Android devices..."
-
-          HTTP_CODE=$(curl -sS \
-            -o pcloudy-devices.json \
-            -w "%{http_code}" \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"token\": \"${PCLOUDY_TOKEN}\",
-              \"duration\": 15,
-              \"platform\": \"android\",
-              \"available_now\": true
-            }" \
-            "https://device.pcloudy.com/api/devices")
-
-          echo "Device list HTTP status: ${HTTP_CODE}"
-
-          if [ "${HTTP_CODE}" != "200" ]; then
-            echo "ERROR: Failed to get pCloudy devices"
-            cat pcloudy-devices.json
-            exit 1
-          fi
-
-          if [ ! -s pcloudy-devices.json ]; then
-            echo "ERROR: Empty device response"
-            exit 1
-          fi
-
-          echo "pCloudy device list received."
-
-          echo ""
-          echo "Available devices:"
-          echo ""
-
-          # Your current API response contains fields similar to:
-          #
-          # 803
-          # Google_Pixel7_Android_17.0.0_81870
-          # Pixel7
-          # 17.0.0
-
-          jq -r '
-            .. |
-            objects |
-            select(has("id")) |
-            [
-              (.id // ""),
-              (.full_name // .fullName // .deviceFullName // ""),
-              (.model // .device_name // .deviceName // ""),
-              (.version // .osVersion // .androidVersion // "")
-            ] |
-            @tsv
-          ' pcloudy-devices.json 2>/dev/null || true
-
-
-      # ============================================================
-      # 15. Select Pixel 8, otherwise Pixel 7
-      # ============================================================
-
-      - name: Select Pixel 8 or Pixel 7
-        id: select-device
-
-        run: |
-          set -e
-
-          echo "Searching for available Pixel 8 / Pixel 7..."
-
-          # --------------------------------------------------------
-          # Find Pixel 8
-          # --------------------------------------------------------
-
-          PIXEL8_ID=$(jq -r '
-            .. |
-            objects |
-            select(has("id")) |
-            select(
-              (
-                [
-                  .full_name?,
-                  .fullName?,
-                  .deviceFullName?,
-                  .model?,
-                  .device_name?,
-                  .deviceName?
-                ]
-                | map(select(. != null))
-                | join(" ")
-                | ascii_downcase
-              )
-              | test("pixel[ _-]?8")
-            ) |
-            .id
-          ' pcloudy-devices.json 2>/dev/null | head -n 1)
-
-
-          # --------------------------------------------------------
-          # Find Pixel 7
-          # --------------------------------------------------------
-
-          PIXEL7_ID=$(jq -r '
-            .. |
-            objects |
-            select(has("id")) |
-            select(
-              (
-                [
-                  .full_name?,
-                  .fullName?,
-                  .deviceFullName?,
-                  .model?,
-                  .device_name?,
-                  .deviceName?
-                ]
-                | map(select(. != null))
-                | join(" ")
-                | ascii_downcase
-              )
-              | test("pixel[ _-]?7")
-            ) |
-            .id
-          ' pcloudy-devices.json 2>/dev/null | head -n 1)
-
-
-          # --------------------------------------------------------
-          # Prefer Pixel 8
-          # --------------------------------------------------------
-
-          if [ -n "${PIXEL8_ID}" ] && [ "${PIXEL8_ID}" != "null" ]; then
-
-            DEVICE_ID="${PIXEL8_ID}"
-
-            echo "Pixel 8 is available."
-            echo "Selected Pixel 8."
-            echo "Device ID: ${DEVICE_ID}"
-
-          elif [ -n "${PIXEL7_ID}" ] && [ "${PIXEL7_ID}" != "null" ]; then
-
-            DEVICE_ID="${PIXEL7_ID}"
-
-            echo "Pixel 8 is not available."
-            echo "Pixel 7 is available."
-            echo "Selected Pixel 7."
-            echo "Device ID: ${DEVICE_ID}"
-
-          else
-
-            echo "ERROR: No Pixel 7 or Pixel 8 available."
-
-            echo ""
-            echo "Available Pixel devices:"
-            jq -r '
-              .. |
-              objects |
-              select(has("id")) |
-              select(
-                tostring
-                | ascii_downcase
-                | contains("pixel")
-              ) |
-              tostring
-            ' pcloudy-devices.json 2>/dev/null || true
-
-            exit 1
-
-          fi
-
-          echo "device_id=${DEVICE_ID}" >> "$GITHUB_OUTPUT"
-
-
-      # ============================================================
-      # 16. Book Selected Device
-      # ============================================================
-
-      - name: Book pCloudy device
-        id: book-device
-
-        env:
-          PCLOUDY_TOKEN: ${{ steps.pcloudy-auth.outputs.token }}
-          DEVICE_ID: ${{ steps.select-device.outputs.device_id }}
-
-        run: |
-          set -e
-
-          echo "Booking pCloudy device..."
-          echo "Device ID: ${DEVICE_ID}"
-
-          HTTP_CODE=$(curl -sS \
-            -o pcloudy-book.json \
-            -w "%{http_code}" \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"token\": \"${PCLOUDY_TOKEN}\",
-              \"duration\": 15,
-              \"id\": ${DEVICE_ID}
-            }" \
-            "https://device.pcloudy.com/api/book_device")
-
-          echo "Book Device HTTP status: ${HTTP_CODE}"
-
-          echo "Book Device response:"
-          cat pcloudy-book.json
-
-          if [ "${HTTP_CODE}" != "200" ]; then
-            echo "ERROR: Device booking failed"
-            exit 1
-          fi
-
-          # Search recursively for rid.
-          RID=$(jq -r '
-            .. |
-            objects |
-            .rid? //
-            empty
-          ' pcloudy-book.json 2>/dev/null | head -n 1)
-
-          if [ -z "${RID}" ] || [ "${RID}" = "null" ]; then
-            echo "ERROR: Reservation ID (rid) not found"
-            exit 1
-          fi
-
-          echo "Reservation created successfully."
-
-          echo "rid=${RID}" >> "$GITHUB_OUTPUT"
-
-
-      # ============================================================
-      # 17. Upload APK to pCloudy
-      # ============================================================
-
+      # ==================================================
+      # 14. Upload APK to pCloudy Cloud
+      # ==================================================
       - name: Upload APK to pCloudy
-        id: pcloudy-upload
-
         env:
           PCLOUDY_TOKEN: ${{ steps.pcloudy-auth.outputs.token }}
 
         run: |
-          set -e
-
           echo "Uploading Firebase APK to pCloudy..."
 
           HTTP_CODE=$(curl -sS \
@@ -550,150 +271,394 @@ jobs:
             -F "file=@firebase-app.apk" \
             -F "source_type=raw" \
             -F "token=${PCLOUDY_TOKEN}" \
-            -F "filter=apk" \
+            -F "filter=all" \
             "https://device.pcloudy.com/api/upload_file")
 
           echo "pCloudy upload HTTP status: ${HTTP_CODE}"
 
-          if [ "${HTTP_CODE}" != "200" ]; then
-            echo "ERROR: APK upload failed"
-
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: pCloudy APK upload failed"
             cat pcloudy-upload.json
-
             exit 1
           fi
 
-          echo "APK uploaded successfully."
+          echo "APK uploaded to pCloudy successfully"
 
 
-      # ============================================================
-      # 18. Install + Launch APK
-      # ============================================================
-
-      - name: Install and launch APK
-        id: install-app
-
+      # ==================================================
+      # 15. Get Available Android Devices
+      # ==================================================
+      - name: Get available Android devices
+        id: device-list
         env:
           PCLOUDY_TOKEN: ${{ steps.pcloudy-auth.outputs.token }}
-          RID: ${{ steps.book-device.outputs.rid }}
+          PCLOUDY_DURATION: ${{ env.PCLOUDY_DURATION }}
+
+        run: |
+          echo "Getting available Android devices..."
+
+          RESPONSE=$(curl -sS \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"token\": \"${PCLOUDY_TOKEN}\",
+              \"duration\": ${PCLOUDY_DURATION},
+              \"platform\": \"Android\",
+              \"available_now\": true
+            }" \
+            "https://device.pcloudy.com/api/devices")
+
+          echo "$RESPONSE" > pcloudy-devices.json
+
+          echo "pCloudy device list received"
+
+          if ! echo "$RESPONSE" | jq empty >/dev/null 2>&1; then
+            echo "ERROR: Invalid JSON received from pCloudy"
+            cat pcloudy-devices.json
+            exit 1
+          fi
+
+          echo ""
+          echo "Available devices:"
+          echo "---------------------------------------------"
+
+          jq -r '
+            ..
+            | objects
+            | select(
+                .id != null
+                and (
+                  .full_name != null
+                  or .fullName != null
+                  or .model != null
+                )
+              )
+            | [
+                (.id // ""),
+                (.full_name // .fullName // ""),
+                (.model // ""),
+                (.version // "")
+              ]
+            | @tsv
+          ' pcloudy-devices.json | sort -u
+
+          echo "---------------------------------------------"
+
+
+      # ==================================================
+      # 16. MULTI DEVICE LOOP
+      # ==================================================
+      - name: Run APK on multiple pCloudy devices
+        env:
+          PCLOUDY_TOKEN: ${{ steps.pcloudy-auth.outputs.token }}
+          PCLOUDY_DURATION: ${{ env.PCLOUDY_DURATION }}
+          PCLOUDY_DEVICES: ${{ env.PCLOUDY_DEVICES }}
 
         run: |
           set -e
 
-          echo "Installing APK on booked pCloudy device..."
+          echo "=============================================="
+          echo "Starting pCloudy multi-device execution"
+          echo "=============================================="
 
-          echo "Reservation ID: ${RID}"
+          echo "Target devices:"
+          echo "$PCLOUDY_DEVICES"
+          echo ""
 
-          HTTP_CODE=$(curl -sS \
-            -o pcloudy-install.json \
-            -w "%{http_code}" \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"token\": \"${PCLOUDY_TOKEN}\",
-              \"rid\": \"${RID}\",
-              \"filename\": \"firebase-app.apk\",
-              \"grant_all_permissions\": true
-            }" \
-            "https://device.pcloudy.com/api/install_app")
+          # --------------------------------------------------
+          # Prepare results file
+          # --------------------------------------------------
+          RESULTS_FILE="pcloudy-results.txt"
 
-          echo "Install API HTTP status: ${HTTP_CODE}"
+          echo "pCloudy Multi Device Results" > "$RESULTS_FILE"
+          echo "==============================================" >> "$RESULTS_FILE"
+          echo "Commit: $GITHUB_SHA" >> "$RESULTS_FILE"
+          echo "Date: $(date -u)" >> "$RESULTS_FILE"
+          echo "" >> "$RESULTS_FILE"
 
-          echo "Install response:"
-          cat pcloudy-install.json
+          IFS=',' read -ra DEVICES <<< "$PCLOUDY_DEVICES"
 
-          if [ "${HTTP_CODE}" != "200" ]; then
-            echo "ERROR: APK installation failed"
+          TOTAL=0
+          SUCCESS=0
+          SKIPPED=0
+          FAILED=0
+
+          # --------------------------------------------------
+          # Loop through every device
+          # --------------------------------------------------
+          for DEVICE_NAME in "${DEVICES[@]}"; do
+
+            DEVICE_NAME="$(echo "$DEVICE_NAME" | xargs)"
+
+            if [ -z "$DEVICE_NAME" ]; then
+              continue
+            fi
+
+            TOTAL=$((TOTAL + 1))
+
+            echo ""
+            echo "=============================================="
+            echo "DEVICE: $DEVICE_NAME"
+            echo "=============================================="
+
+            echo "" >> "$RESULTS_FILE"
+            echo "DEVICE: $DEVICE_NAME" >> "$RESULTS_FILE"
+
+            # ------------------------------------------------
+            # Find device ID
+            # ------------------------------------------------
+            DEVICE_ID=$(jq -r \
+              --arg target "$DEVICE_NAME" '
+              [
+                ..
+                | objects
+                | select(.id != null)
+                | select(
+                    (
+                      (.full_name // "")
+                      + " "
+                      + (.fullName // "")
+                      + " "
+                      + (.deviceFullName // "")
+                      + " "
+                      + (.model // "")
+                      + " "
+                      + (.name // "")
+                    )
+                    | contains($target)
+                  )
+                | .id
+              ]
+              | first // empty
+              ' pcloudy-devices.json)
+
+            if [ -z "$DEVICE_ID" ]; then
+
+              echo "Device $DEVICE_NAME is not currently available."
+              echo "Skipping device."
+
+              echo "STATUS: SKIPPED - device unavailable" >> "$RESULTS_FILE"
+
+              SKIPPED=$((SKIPPED + 1))
+
+              continue
+            fi
+
+            echo "Selected device:"
+            echo "Device Name: $DEVICE_NAME"
+            echo "Device ID: $DEVICE_ID"
+
+            echo "Device ID: $DEVICE_ID" >> "$RESULTS_FILE"
+
+            RID=""
+
+            # ------------------------------------------------
+            # Book device
+            # ------------------------------------------------
+            echo ""
+            echo "Booking pCloudy device..."
+
+            BOOK_RESPONSE=$(curl -sS \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"token\": \"${PCLOUDY_TOKEN}\",
+                \"duration\": ${PCLOUDY_DURATION},
+                \"id\": \"${DEVICE_ID}\"
+              }" \
+              "https://device.pcloudy.com/api/book_device")
+
+            echo "Book response received"
+
+            echo "$BOOK_RESPONSE" > "book-${DEVICE_NAME}.json"
+
+            RID=$(echo "$BOOK_RESPONSE" | jq -r '
+              .result.rid
+              // .result.reservationId
+              // .result.id
+              // .rid
+              // empty
+            ')
+
+            if [ -z "$RID" ]; then
+
+              echo "ERROR: Could not get reservation ID."
+              cat "book-${DEVICE_NAME}.json"
+
+              echo "STATUS: FAILED - booking" >> "$RESULTS_FILE"
+
+              FAILED=$((FAILED + 1))
+
+              continue
+            fi
+
+            echo "Device booked successfully"
+            echo "Reservation ID: $RID"
+
+            # ------------------------------------------------
+            # Make sure device gets released even if a later
+            # command fails
+            # ------------------------------------------------
+            DEVICE_COMPLETED=false
+
+            # ------------------------------------------------
+            # Install + Launch APK
+            # ------------------------------------------------
+            echo ""
+            echo "Installing and launching APK..."
+            echo "Device: $DEVICE_NAME"
+            echo "Reservation ID: $RID"
+
+            INSTALL_RESPONSE=$(curl -sS \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"token\": \"${PCLOUDY_TOKEN}\",
+                \"rid\": \"${RID}\",
+                \"filename\": \"firebase-app.apk\",
+                \"grant_all_permissions\": true
+              }" \
+              "https://device.pcloudy.com/api/install_app")
+
+            echo "$INSTALL_RESPONSE" > "install-${DEVICE_NAME}.json"
+
+            echo "Install response received"
+
+            INSTALL_CODE=$(echo "$INSTALL_RESPONSE" | jq -r '
+              .result.code
+              // .code
+              // empty
+            ')
+
+            INSTALL_MESSAGE=$(echo "$INSTALL_RESPONSE" | jq -r '
+              .result.msg
+              // .result.message
+              // .msg
+              // .message
+              // empty
+            ')
+
+            echo "Install API code: $INSTALL_CODE"
+            echo "Install message: $INSTALL_MESSAGE"
+
+            # ------------------------------------------------
+            # Verify installation response
+            # ------------------------------------------------
+            if [ "$INSTALL_CODE" != "200" ]; then
+
+              echo "ERROR: APK installation/launch failed."
+
+              echo "STATUS: FAILED - install/launch" >> "$RESULTS_FILE"
+
+              FAILED=$((FAILED + 1))
+
+            else
+
+              echo "APK installed/launched successfully."
+
+              echo "STATUS: SUCCESS - install/launch" >> "$RESULTS_FILE"
+
+              SUCCESS=$((SUCCESS + 1))
+
+            fi
+
+            # ------------------------------------------------
+            # Release device
+            # ------------------------------------------------
+            echo ""
+            echo "Releasing pCloudy device..."
+
+            RELEASE_RESPONSE=$(curl -sS \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"token\": \"${PCLOUDY_TOKEN}\",
+                \"rid\": \"${RID}\"
+              }" \
+              "https://device.pcloudy.com/api/release_device")
+
+            echo "$RELEASE_RESPONSE" > "release-${DEVICE_NAME}.json"
+
+            RELEASE_CODE=$(echo "$RELEASE_RESPONSE" | jq -r '
+              .result.code
+              // .code
+              // empty
+            ')
+
+            echo "Release API code: $RELEASE_CODE"
+
+            if [ "$RELEASE_CODE" = "200" ]; then
+              echo "Device released successfully."
+            else
+              echo "WARNING: Device release response was not 200."
+              cat "release-${DEVICE_NAME}.json"
+            fi
+
+          done
+
+          # --------------------------------------------------
+          # Final summary
+          # --------------------------------------------------
+          echo ""
+          echo "=============================================="
+          echo "pCloudy Multi Device Summary"
+          echo "=============================================="
+
+          echo "Total target devices : $TOTAL"
+          echo "Successful           : $SUCCESS"
+          echo "Skipped/unavailable  : $SKIPPED"
+          echo "Failed               : $FAILED"
+
+          echo ""
+          echo "Total target devices: $TOTAL" >> "$RESULTS_FILE"
+          echo "Successful: $SUCCESS" >> "$RESULTS_FILE"
+          echo "Skipped/unavailable: $SKIPPED" >> "$RESULTS_FILE"
+          echo "Failed: $FAILED" >> "$RESULTS_FILE"
+
+          # --------------------------------------------------
+          # Fail workflow only if an actual test failed.
+          # Unavailable device is skipped.
+          # --------------------------------------------------
+          if [ "$FAILED" -gt 0 ]; then
+            echo ""
+            echo "ERROR: One or more devices failed."
             exit 1
           fi
 
-          # Detect explicit failure if returned by API.
-          if jq -e '
-            (.success? == false) or
-            (.status? == false) or
-            (.status? == "error")
-          ' pcloudy-install.json >/dev/null 2>&1; then
-
-            echo "ERROR: pCloudy reported installation failure"
+          if [ "$SUCCESS" -eq 0 ]; then
+            echo ""
+            echo "ERROR: No device was successfully tested."
             exit 1
-
           fi
 
-          echo "APK install/launch request completed successfully."
+          echo ""
+          echo "All available target devices completed successfully."
 
 
-      # ============================================================
-      # 19. Release Device
-      # ============================================================
-
-      - name: Release pCloudy device
-        if: ${{ always() && steps.book-device.outputs.rid != '' }}
-
-        env:
-          PCLOUDY_TOKEN: ${{ steps.pcloudy-auth.outputs.token }}
-          RID: ${{ steps.book-device.outputs.rid }}
-
-        run: |
-          echo "Releasing pCloudy device..."
-
-          HTTP_CODE=$(curl -sS \
-            -o pcloudy-release.json \
-            -w "%{http_code}" \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"token\": \"${PCLOUDY_TOKEN}\",
-              \"rid\": \"${RID}\"
-            }" \
-            "https://device.pcloudy.com/api/release_device")
-
-          echo "Release HTTP status: ${HTTP_CODE}"
-
-          cat pcloudy-release.json
-
-          if [ "${HTTP_CODE}" != "200" ]; then
-            echo "WARNING: Device release API returned HTTP ${HTTP_CODE}"
-          else
-            echo "pCloudy device release completed."
-          fi
-
-
-      # ============================================================
-      # 20. Upload Results
-      # ============================================================
-
+      # ==================================================
+      # 17. Upload pCloudy results
+      # ==================================================
       - name: Upload pCloudy results
-        if: ${{ always() }}
-
+        if: always()
         uses: actions/upload-artifact@v4
-
         with:
           name: pcloudy-results
-
           path: |
-            firebase-release.json
-            pcloudy-auth.json
+            pcloudy-results.txt
             pcloudy-devices.json
-            pcloudy-book.json
-            pcloudy-upload.json
-            pcloudy-install.json
-            pcloudy-release.json
-
-          if-no-files-found: ignore
+            book-*.json
+            install-*.json
+            release-*.json
+          if-no-files-found: warn
 
 
-      # ============================================================
-      # 21. Upload APK Artifact
-      # ============================================================
-
+      # ==================================================
+      # 18. Upload Firebase APK artifact
+      # ==================================================
       - name: Upload APK artifact
-        if: ${{ always() }}
-
+        if: always()
         uses: actions/upload-artifact@v4
-
         with:
           name: firebase-apk
-
           path: firebase-app.apk
-
-          if-no-files-found: ignore
+          if-no-files-found: error
