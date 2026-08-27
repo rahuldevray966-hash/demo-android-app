@@ -3,7 +3,7 @@ name: Build, Firebase and pCloud
 on:
   push:
     branches:
-      - mainn
+      - main
 
   workflow_dispatch:
 
