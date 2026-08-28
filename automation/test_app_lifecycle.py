@@ -1,95 +1,198 @@
-import subprocess
+import os
 import time
+import pytest
 
-PACKAGE_NAME = "com.epam.mobitru"
+from appium import webdriver
+from appium.options.android import UiAutomator2Options
 
 
-def run_adb(*args):
-    result = subprocess.run(
-        ["adb", *args],
-        capture_output=True,
-        text=True
+APP_PACKAGE = os.getenv("APP_PACKAGE", "com.epam.mobitru")
+DEVICE_NAME = os.getenv("PCLOUDY_DEVICE", "")
+
+PCLOUDY_EMAIL = os.environ["PCLOUDY_EMAIL"]
+PCLOUDY_ACCESS_KEY = os.environ["PCLOUDY_ACCESS_KEY"]
+
+PCLOUDY_APPIUM_URL = "https://device.pcloudy.com/appiumcloud/wd/hub"
+
+
+def create_driver():
+    options = UiAutomator2Options()
+
+    # -----------------------------
+    # pCloudy credentials
+    # -----------------------------
+    options.set_capability(
+        "pCloudy_Username",
+        PCLOUDY_EMAIL
     )
 
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"ADB command failed: {' '.join(args)}\n"
-            f"{result.stderr}"
+    options.set_capability(
+        "pCloudy_ApiKey",
+        PCLOUDY_ACCESS_KEY
+    )
+
+    # -----------------------------
+    # APK already uploaded to pCloudy
+    # -----------------------------
+    options.set_capability(
+        "pCloudy_ApplicationName",
+        "firebase-app.apk"
+    )
+
+    # -----------------------------
+    # Device
+    # -----------------------------
+    options.set_capability(
+        "pCloudy_DeviceFullName",
+        DEVICE_NAME
+    )
+
+    options.set_capability(
+        "pCloudy_DurationInMinutes",
+        15
+    )
+
+    # Android
+    options.set_capability(
+        "platformName",
+        "Android"
+    )
+
+    options.set_capability(
+        "appium:automationName",
+        "UiAutomator2"
+    )
+
+    options.set_capability(
+        "appium:appPackage",
+        APP_PACKAGE
+    )
+
+    options.set_capability(
+        "appium:noReset",
+        False
+    )
+
+    options.set_capability(
+        "appium:autoGrantPermissions",
+        True
+    )
+
+    options.set_capability(
+        "appium:newCommandTimeout",
+        120
+    )
+
+    print(f"Starting Appium session on: {DEVICE_NAME}")
+
+    return webdriver.Remote(
+        command_executor=PCLOUDY_APPIUM_URL,
+        options=options
+    )
+
+
+@pytest.mark.lifecycle
+def test_app_lifecycle():
+
+    driver = None
+
+    try:
+        driver = create_driver()
+
+        print("Appium session created successfully")
+
+        # ---------------------------------
+        # 1. Application Launch
+        # ---------------------------------
+
+        print("Step 1: Application launched")
+
+        time.sleep(10)
+
+        # Verify package
+        current_package = driver.current_package
+
+        print(
+            f"Current package: {current_package}"
         )
 
-    return result.stdout.strip()
+        assert current_package == APP_PACKAGE, (
+            f"Expected {APP_PACKAGE}, "
+            f"but found {current_package}"
+        )
 
+        print("Application launch verified")
 
-def test_app_lifecycle():
-    # 1. Check ADB device
-    devices = run_adb("devices")
+        # ---------------------------------
+        # 2. Wait
+        # ---------------------------------
 
-    assert "\tdevice" in devices, "No Android device connected"
+        print("Step 2: Waiting for application")
 
-    print("✓ ADB device connected")
+        time.sleep(5)
 
-    # 2. Launch application
-    run_adb(
-        "shell",
-        "monkey",
-        "-p",
-        PACKAGE_NAME,
-        "1"
-    )
+        # ---------------------------------
+        # 3. Background
+        # ---------------------------------
 
-    print("✓ App launched")
+        print("Step 3: Sending application to background")
 
-    # 3. Wait
-    time.sleep(3)
+        driver.background_app(5)
 
-    # 4. Put application in background
-    run_adb(
-        "shell",
-        "input",
-        "keyevent",
-        "HOME"
-    )
+        print("Application backgrounded successfully")
 
-    print("✓ App moved to background")
+        # ---------------------------------
+        # 4. Foreground
+        # ---------------------------------
 
-    time.sleep(2)
+        print("Step 4: Bringing application to foreground")
 
-    # 5. Bring application to foreground
-    run_adb(
-        "shell",
-        "monkey",
-        "-p",
-        PACKAGE_NAME,
-        "1"
-    )
+        driver.activate_app(APP_PACKAGE)
 
-    print("✓ App brought to foreground")
+        time.sleep(5)
 
-    time.sleep(2)
+        print("Application foregrounded successfully")
 
-    # 6. Kill application
-    run_adb(
-        "shell",
-        "am",
-        "force-stop",
-        PACKAGE_NAME
-    )
+        # ---------------------------------
+        # 5. Kill
+        # ---------------------------------
 
-    print("✓ App killed")
+        print("Step 5: Terminating application")
 
-    time.sleep(2)
+        driver.terminate_app(APP_PACKAGE)
 
-    # 7. Relaunch application
-    run_adb(
-        "shell",
-        "monkey",
-        "-p",
-        PACKAGE_NAME,
-        "1"
-    )
+        time.sleep(3)
 
-    print("✓ App relaunched")
+        print("Application terminated successfully")
 
-    time.sleep(3)
+        # ---------------------------------
+        # 6. Relaunch
+        # ---------------------------------
 
-    print("✓ App lifecycle test completed successfully")
+        print("Step 6: Relaunching application")
+
+        driver.activate_app(APP_PACKAGE)
+
+        time.sleep(8)
+
+        current_package = driver.current_package
+
+        print(
+            f"Package after relaunch: {current_package}"
+        )
+
+        assert current_package == APP_PACKAGE, (
+            "Application did not relaunch correctly"
+        )
+
+        print("Application relaunch verified")
+
+        print("--------------------------------")
+        print("APP LIFECYCLE TEST PASSED")
+        print("--------------------------------")
+
+    finally:
+
+        if driver:
+            print("Ending Appium session")
+            driver.quit()
