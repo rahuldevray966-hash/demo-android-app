@@ -12,7 +12,9 @@ permissions:
 
 jobs:
   appium-pcloudy:
-    name: Firebase APK → pCloudy → Appium Pixel 7
+
+    name: Firebase APK → pCloudy → Appium Galaxy S25
+
     runs-on: ubuntu-latest
 
     steps:
@@ -41,10 +43,13 @@ jobs:
 
       - name: Get Firebase access token
         id: firebase-token
+
         run: |
           set -e
 
-          echo "Getting Firebase access token..."
+          echo "=========================================="
+          echo "Getting Firebase access token"
+          echo "=========================================="
 
           ACCESS_TOKEN=$(gcloud auth print-access-token)
 
@@ -66,6 +71,7 @@ jobs:
 
       - name: Get latest Firebase release
         id: firebase-release
+
         env:
           FIREBASE_PROJECT_NUMBER: ${{ secrets.FIREBASE_PROJECT_NUMBER }}
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
@@ -74,7 +80,9 @@ jobs:
         run: |
           set -e
 
-          echo "Getting latest Firebase release..."
+          echo "=========================================="
+          echo "Getting latest Firebase release"
+          echo "=========================================="
 
           RESPONSE=$(curl -sS \
             --fail-with-body \
@@ -84,15 +92,15 @@ jobs:
 
           echo "$RESPONSE" > firebase-release.json
 
-          DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.releases[0].binaryDownloadUri')
+          DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.releases[0].binaryDownloadUri // empty')
 
-          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+          if [ -z "$DOWNLOAD_URL" ]; then
             echo "ERROR: Firebase APK download URL not found"
             cat firebase-release.json
             exit 1
           fi
 
-          echo "Firebase release found"
+          echo "Firebase latest release found"
 
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
 
@@ -102,13 +110,16 @@ jobs:
       # ==================================================
 
       - name: Download APK from Firebase
+
         env:
           DOWNLOAD_URL: ${{ steps.firebase-release.outputs.download_url }}
 
         run: |
           set -e
 
-          echo "Downloading existing APK from Firebase..."
+          echo "=========================================="
+          echo "Downloading existing APK from Firebase"
+          echo "=========================================="
 
           curl -fL \
             --retry 3 \
@@ -131,10 +142,13 @@ jobs:
       # ==================================================
 
       - name: Verify APK
+
         run: |
           set -e
 
-          echo "Verifying APK..."
+          echo "=========================================="
+          echo "Verifying APK"
+          echo "=========================================="
 
           file firebase-app.apk
 
@@ -155,7 +169,9 @@ jobs:
       # ==================================================
 
       - name: Authenticate with pCloudy
+
         id: pcloudy-auth
+
         env:
           PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
@@ -163,7 +179,9 @@ jobs:
         run: |
           set -e
 
-          echo "Authenticating with pCloudy..."
+          echo "=========================================="
+          echo "Authenticating with pCloudy"
+          echo "=========================================="
 
           RESPONSE=$(curl -sS \
             -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
@@ -191,13 +209,16 @@ jobs:
       # ==================================================
 
       - name: Upload APK to pCloudy
+
         env:
           PCLOUDY_TOKEN: ${{ steps.pcloudy-auth.outputs.token }}
 
         run: |
           set -e
 
-          echo "Uploading Firebase APK to pCloudy..."
+          echo "=========================================="
+          echo "Uploading Firebase APK to pCloudy"
+          echo "=========================================="
 
           HTTP_CODE=$(curl -sS \
             -o pcloudy-upload.json \
@@ -225,7 +246,9 @@ jobs:
       # ==================================================
 
       - name: Setup Python
+
         uses: actions/setup-python@v5
+
         with:
           python-version: "3.12"
 
@@ -235,8 +258,19 @@ jobs:
       # ==================================================
 
       - name: Install Appium dependencies
+
         run: |
           set -e
+
+          echo "=========================================="
+          echo "Installing Appium dependencies"
+          echo "=========================================="
+
+          if [ ! -f requirements.txt ]; then
+            echo "ERROR: requirements.txt not found"
+            echo "Please add requirements.txt to repository root"
+            exit 1
+          fi
 
           python -m pip install --upgrade pip
 
@@ -246,21 +280,24 @@ jobs:
 
 
       # ==================================================
-      # 11. Run Appium test on Pixel 7
+      # 11. Run Appium lifecycle test on Galaxy S25
       # ==================================================
 
-      - name: Run Appium lifecycle test on Pixel 7
+      - name: Run Appium lifecycle test on Galaxy S25
+
         env:
           PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
-          PCLOUDY_DEVICE: Google_Pixel7_Android_17.0.0_81870
+          # pCloudy exact DeviceFullName
+          PCLOUDY_DEVICE: Samsung_GalaxyS25_Android_15.0.0_d9af3
 
           APP_PACKAGE: com.epam.mobitru
 
         run: |
           set -e
 
+          echo ""
           echo "=========================================="
           echo "Starting Appium lifecycle test"
           echo "=========================================="
@@ -269,6 +306,7 @@ jobs:
           echo "Package: $APP_PACKAGE"
 
           echo "=========================================="
+          echo ""
 
           pytest \
             automation/test_app_lifecycle.py \
@@ -276,6 +314,7 @@ jobs:
             --tb=short \
             --junitxml=appium-results.xml
 
+          echo ""
           echo "=========================================="
           echo "Appium test completed successfully"
           echo "=========================================="
@@ -286,13 +325,18 @@ jobs:
       # ==================================================
 
       - name: Upload Appium test results
+
         if: always()
+
         uses: actions/upload-artifact@v4
+
         with:
-          name: appium-test-results-pixel7
+          name: appium-test-results-galaxy-s25
+
           path: |
             appium-results.xml
             firebase-release.json
             pcloudy-auth.json
             pcloudy-upload.json
+
           if-no-files-found: warn
