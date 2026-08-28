@@ -3,7 +3,7 @@ name: Build, Firebase and pCloudy Multi Device
 on:
   push:
     branches:
-      - main
+      - mainn
 
   workflow_dispatch:
 
