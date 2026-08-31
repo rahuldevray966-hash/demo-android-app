@@ -10,26 +10,60 @@ on:
 permissions:
   contents: read
 
-jobs:
-  appium-pcloudy:
 
-    name: Firebase APK → pCloudy → Appium Galaxy S25
+jobs:
+
+  # ==================================================
+  # STAGE 1
+  # Firebase Authentication
+  # ==================================================
+
+  firebase-auth:
+
+    name: Stage 1 - Firebase Authentication
 
     runs-on: ubuntu-latest
 
     steps:
 
-      # ==================================================
-      # 1. Checkout repository
-      # ==================================================
+      - name: Authenticate with Firebase
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
 
-      - name: Checkout source code
-        uses: actions/checkout@v4
+      - name: Verify Firebase authentication
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "STAGE 1 - Firebase Authentication"
+          echo "=========================================="
+
+          ACCESS_TOKEN=$(gcloud auth print-access-token)
+
+          if [ -z "$ACCESS_TOKEN" ]; then
+            echo "ERROR: Firebase authentication failed"
+            exit 1
+          fi
+
+          echo "Firebase authentication successful"
 
 
-      # ==================================================
-      # 2. Authenticate with Firebase
-      # ==================================================
+  # ==================================================
+  # STAGE 2
+  # Get Firebase Release
+  # ==================================================
+
+  firebase-release:
+
+    name: Stage 2 - Get Firebase Release
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - firebase-auth
+
+    steps:
 
       - name: Authenticate with Firebase
         uses: google-github-actions/auth@v2
@@ -37,203 +71,280 @@ jobs:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
 
 
-      # ==================================================
-      # 3. Get Firebase access token
-      # ==================================================
-
-      - name: Get Firebase access token
-        id: firebase-token
-
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "Getting Firebase access token"
-          echo "=========================================="
-
-          ACCESS_TOKEN=$(gcloud auth print-access-token)
-
-          if [ -z "$ACCESS_TOKEN" ]; then
-            echo "ERROR: Could not get Firebase access token"
-            exit 1
-          fi
-
-          echo "::add-mask::$ACCESS_TOKEN"
-
-          echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
-
-          echo "Firebase authentication successful"
-
-
-      # ==================================================
-      # 4. Get latest APK from Firebase
-      # ==================================================
-
       - name: Get latest Firebase release
+
         id: firebase-release
 
         env:
           FIREBASE_PROJECT_NUMBER: ${{ secrets.FIREBASE_PROJECT_NUMBER }}
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
-          ACCESS_TOKEN: ${{ steps.firebase-token.outputs.access_token }}
 
         run: |
+
           set -e
 
           echo "=========================================="
-          echo "Getting latest Firebase release"
+          echo "STAGE 2 - Getting Firebase Release"
           echo "=========================================="
 
-          RESPONSE=$(curl -sS \
+          ACCESS_TOKEN=$(gcloud auth print-access-token)
+
+          PROJECT_NUMBER="$(printf '%s' "$FIREBASE_PROJECT_NUMBER" | tr -d '[:space:]')"
+          APP_ID="$(printf '%s' "$FIREBASE_APP_ID" | tr -d '[:space:]')"
+
+          if [ -z "$PROJECT_NUMBER" ]; then
+            echo "ERROR: FIREBASE_PROJECT_NUMBER is empty"
+            exit 1
+          fi
+
+          if ! [[ "$PROJECT_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: FIREBASE_PROJECT_NUMBER must be numeric"
+            exit 1
+          fi
+
+          if [ -z "$APP_ID" ]; then
+            echo "ERROR: FIREBASE_APP_ID is empty"
+            exit 1
+          fi
+
+          API_URL="https://firebaseappdistribution.googleapis.com/v1/projects/${PROJECT_NUMBER}/apps/${APP_ID}/releases"
+
+          RESPONSE=$(curl \
+            -sS \
             --fail-with-body \
-            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-            -H "Accept: application/json" \
-            "https://firebaseappdistribution.googleapis.com/v1/projects/${FIREBASE_PROJECT_NUMBER}/apps/${FIREBASE_APP_ID}/releases?pageSize=1&orderBy=createTime%20desc")
+            --get \
+            --url "$API_URL" \
+            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+            --header "Accept: application/json" \
+            --data-urlencode "pageSize=1" \
+            --data-urlencode "orderBy=createTime desc")
 
           echo "$RESPONSE" > firebase-release.json
 
           DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.releases[0].binaryDownloadUri // empty')
 
+          RELEASE_NAME=$(echo "$RESPONSE" | jq -r '.releases[0].name // empty')
+
           if [ -z "$DOWNLOAD_URL" ]; then
-            echo "ERROR: Firebase APK download URL not found"
+            echo "ERROR: Firebase release not found"
             cat firebase-release.json
             exit 1
           fi
 
-          echo "Firebase latest release found"
+          echo "Firebase release found"
+          echo "Release: $RELEASE_NAME"
 
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
 
 
-      # ==================================================
-      # 5. Download existing APK from Firebase
-      # ==================================================
+      - name: Upload Firebase release information
 
-      - name: Download APK from Firebase
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: firebase-release-info
+
+          path: firebase-release.json
+
+
+  # ==================================================
+  # STAGE 3
+  # Download Existing APK
+  # ==================================================
+
+  download-app:
+
+    name: Stage 3 - Download Existing Firebase APK
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - firebase-release
+
+    steps:
+
+      - name: Authenticate with Firebase
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+
+      - name: Download latest APK
 
         env:
-          DOWNLOAD_URL: ${{ steps.firebase-release.outputs.download_url }}
+          FIREBASE_PROJECT_NUMBER: ${{ secrets.FIREBASE_PROJECT_NUMBER }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
 
         run: |
+
           set -e
 
           echo "=========================================="
-          echo "Downloading existing APK from Firebase"
+          echo "STAGE 3 - Downloading Existing APK"
           echo "=========================================="
 
-          curl -fL \
-            --retry 3 \
-            --retry-delay 2 \
-            -o firebase-app.apk \
-            "$DOWNLOAD_URL"
+          ACCESS_TOKEN=$(gcloud auth print-access-token)
 
-          if [ ! -s firebase-app.apk ]; then
-            echo "ERROR: Firebase APK download failed"
+          API_URL="https://firebaseappdistribution.googleapis.com/v1/projects/${FIREBASE_PROJECT_NUMBER}/apps/${FIREBASE_APP_ID}/releases"
+
+          RESPONSE=$(curl \
+            -sS \
+            --fail-with-body \
+            --get \
+            --url "$API_URL" \
+            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+            --header "Accept: application/json" \
+            --data-urlencode "pageSize=1" \
+            --data-urlencode "orderBy=createTime desc")
+
+          DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.releases[0].binaryDownloadUri // empty')
+
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "ERROR: Firebase APK URL not found"
             exit 1
           fi
 
-          echo "Firebase APK downloaded successfully"
+          curl \
+            -fL \
+            --retry 3 \
+            --retry-delay 2 \
+            "$DOWNLOAD_URL" \
+            -o firebase-app.apk
+
+          if [ ! -s firebase-app.apk ]; then
+            echo "ERROR: APK download failed"
+            exit 1
+          fi
+
+          echo "APK downloaded successfully"
 
           ls -lh firebase-app.apk
 
 
-      # ==================================================
-      # 6. Verify APK
-      # ==================================================
+      - name: Upload APK artifact
 
-      - name: Verify APK
+        uses: actions/upload-artifact@v4
 
-        run: |
-          set -e
+        with:
+          name: firebase-app
 
-          echo "=========================================="
-          echo "Verifying APK"
-          echo "=========================================="
-
-          file firebase-app.apk
-
-          APK_SIZE=$(stat -c%s firebase-app.apk)
-
-          if [ "$APK_SIZE" -le 0 ]; then
-            echo "ERROR: APK is empty"
-            exit 1
-          fi
-
-          echo "APK size: ${APK_SIZE} bytes"
-
-          echo "APK verification successful"
+          path: firebase-app.apk
 
 
-      # ==================================================
-      # 7. Authenticate with pCloudy
-      # ==================================================
+  # ==================================================
+  # STAGE 4
+  # pCloudy Authentication
+  # ==================================================
+
+  pcloudy-auth:
+
+    name: Stage 4 - pCloudy Authentication
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - download-app
+
+    steps:
 
       - name: Authenticate with pCloudy
-
-        id: pcloudy-auth
 
         env:
           PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
         run: |
+
           set -e
 
           echo "=========================================="
-          echo "Authenticating with pCloudy"
+          echo "STAGE 4 - pCloudy Authentication"
           echo "=========================================="
 
-          RESPONSE=$(curl -sS \
+          RESPONSE=$(curl \
+            -sS \
+            --fail-with-body \
             -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
             "https://device.pcloudy.com/api/access")
-
-          echo "$RESPONSE" > pcloudy-auth.json
 
           TOKEN=$(echo "$RESPONSE" | jq -r '.result.token // empty')
 
           if [ -z "$TOKEN" ]; then
-            echo "ERROR: Could not extract pCloudy token"
-            cat pcloudy-auth.json
+            echo "ERROR: pCloudy authentication failed"
+            echo "$RESPONSE"
             exit 1
           fi
-
-          echo "::add-mask::$TOKEN"
-
-          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
           echo "pCloudy authentication successful"
 
 
-      # ==================================================
-      # 8. Upload existing Firebase APK to pCloudy
-      # ==================================================
+  # ==================================================
+  # STAGE 5
+  # Upload APK to pCloudy
+  # ==================================================
+
+  pcloudy-upload:
+
+    name: Stage 5 - Upload APK to pCloudy
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - pcloudy-auth
+
+    steps:
+
+      - name: Download APK artifact
+
+        uses: actions/download-artifact@v4
+
+        with:
+          name: firebase-app
+          path: .
+
 
       - name: Upload APK to pCloudy
 
         env:
-          PCLOUDY_TOKEN: ${{ steps.pcloudy-auth.outputs.token }}
+          PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
+          PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
         run: |
+
           set -e
 
           echo "=========================================="
-          echo "Uploading Firebase APK to pCloudy"
+          echo "STAGE 5 - Uploading APK to pCloudy"
           echo "=========================================="
 
-          HTTP_CODE=$(curl -sS \
+          RESPONSE=$(curl \
+            -sS \
+            --fail-with-body \
+            -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
+            "https://device.pcloudy.com/api/access")
+
+          TOKEN=$(echo "$RESPONSE" | jq -r '.result.token // empty')
+
+          if [ -z "$TOKEN" ]; then
+            echo "ERROR: Could not get pCloudy token"
+            exit 1
+          fi
+
+          HTTP_CODE=$(curl \
+            -sS \
             -o pcloudy-upload.json \
             -w "%{http_code}" \
             -X POST \
             -F "file=@firebase-app.apk" \
             -F "source_type=raw" \
-            -F "token=${PCLOUDY_TOKEN}" \
+            -F "token=${TOKEN}" \
             -F "filter=all" \
             "https://device.pcloudy.com/api/upload_file")
 
-          echo "pCloudy upload HTTP status: ${HTTP_CODE}"
+          echo "pCloudy upload HTTP status: $HTTP_CODE"
 
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "ERROR: pCloudy APK upload failed"
+            echo "ERROR: pCloudy upload failed"
             cat pcloudy-upload.json
             exit 1
           fi
@@ -241,9 +352,36 @@ jobs:
           echo "APK uploaded to pCloudy successfully"
 
 
-      # ==================================================
-      # 9. Setup Python
-      # ==================================================
+      - name: Upload pCloudy upload response
+
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: pcloudy-upload-result
+
+          path: pcloudy-upload.json
+
+
+  # ==================================================
+  # STAGE 6
+  # Appium Test - Galaxy S25
+  # ==================================================
+
+  appium-test:
+
+    name: Stage 6 - Appium Galaxy S25
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - pcloudy-upload
+
+    steps:
+
+      - name: Checkout repository
+
+        uses: actions/checkout@v4
+
 
       - name: Setup Python
 
@@ -253,13 +391,10 @@ jobs:
           python-version: "3.12"
 
 
-      # ==================================================
-      # 10. Install Appium Python dependencies
-      # ==================================================
-
       - name: Install Appium dependencies
 
         run: |
+
           set -e
 
           echo "=========================================="
@@ -268,7 +403,6 @@ jobs:
 
           if [ ! -f requirements.txt ]; then
             echo "ERROR: requirements.txt not found"
-            echo "Please add requirements.txt to repository root"
             exit 1
           fi
 
@@ -276,37 +410,31 @@ jobs:
 
           pip install -r requirements.txt
 
-          echo "Appium dependencies installed successfully"
 
-
-      # ==================================================
-      # 11. Run Appium lifecycle test on Galaxy S25
-      # ==================================================
-
-      - name: Run Appium lifecycle test on Galaxy S25
+      - name: Run Appium lifecycle test
 
         env:
+
           PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
+
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
-          # pCloudy exact DeviceFullName
           PCLOUDY_DEVICE: Samsung_GalaxyS25_Android_15.0.0_d9af3
 
           APP_PACKAGE: com.epam.mobitru
 
         run: |
+
           set -e
 
-          echo ""
           echo "=========================================="
-          echo "Starting Appium lifecycle test"
+          echo "STAGE 6 - Appium Lifecycle Test"
           echo "=========================================="
 
           echo "Device : $PCLOUDY_DEVICE"
           echo "Package: $APP_PACKAGE"
 
           echo "=========================================="
-          echo ""
 
           pytest \
             automation/test_app_lifecycle.py \
@@ -316,15 +444,11 @@ jobs:
 
           echo ""
           echo "=========================================="
-          echo "Appium test completed successfully"
+          echo "Appium lifecycle test PASSED"
           echo "=========================================="
 
 
-      # ==================================================
-      # 12. Upload test results
-      # ==================================================
-
-      - name: Upload Appium test results
+      - name: Upload Appium results
 
         if: always()
 
@@ -335,8 +459,5 @@ jobs:
 
           path: |
             appium-results.xml
-            firebase-release.json
-            pcloudy-auth.json
-            pcloudy-upload.json
 
           if-no-files-found: warn
