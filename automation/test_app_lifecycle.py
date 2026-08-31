@@ -16,11 +16,13 @@ PCLOUDY_APPIUM_URL = "https://device.pcloudy.com/appiumcloud/wd/hub"
 
 
 def create_driver():
+
+    if not DEVICE_NAME:
+        raise RuntimeError("PCLOUDY_DEVICE is empty")
+
     options = UiAutomator2Options()
 
-    # -----------------------------
-    # pCloudy credentials
-    # -----------------------------
+    # pCloudy
     options.set_capability(
         "pCloudy_Username",
         PCLOUDY_EMAIL
@@ -31,17 +33,11 @@ def create_driver():
         PCLOUDY_ACCESS_KEY
     )
 
-    # -----------------------------
-    # APK already uploaded to pCloudy
-    # -----------------------------
     options.set_capability(
         "pCloudy_ApplicationName",
         "firebase-app.apk"
     )
 
-    # -----------------------------
-    # Device
-    # -----------------------------
     options.set_capability(
         "pCloudy_DeviceFullName",
         DEVICE_NAME
@@ -83,12 +79,56 @@ def create_driver():
         120
     )
 
+    # Give pCloudy enough time to create the session
+    options.set_capability(
+        "appium:newCommandTimeout",
+        300
+    )
+
     print(f"Starting Appium session on: {DEVICE_NAME}")
 
-    return webdriver.Remote(
-        command_executor=PCLOUDY_APPIUM_URL,
-        options=options
-    )
+    last_error = None
+
+    for attempt in range(1, 4):
+
+        try:
+
+            print(
+                f"Creating pCloudy Appium session "
+                f"(attempt {attempt}/3)..."
+            )
+
+            driver = webdriver.Remote(
+                command_executor=PCLOUDY_APPIUM_URL,
+                options=options
+            )
+
+            print("Appium session created successfully")
+
+            return driver
+
+        except Exception as exc:
+
+            last_error = exc
+
+            print(
+                f"Appium session attempt {attempt} failed:"
+            )
+
+            print(str(exc))
+
+            if attempt < 3:
+
+                print(
+                    "Waiting 15 seconds before retry..."
+                )
+
+                time.sleep(15)
+
+    raise RuntimeError(
+        f"Could not create pCloudy Appium session "
+        f"after 3 attempts for device: {DEVICE_NAME}"
+    ) from last_error
 
 
 @pytest.mark.lifecycle
@@ -97,19 +137,20 @@ def test_app_lifecycle():
     driver = None
 
     try:
+
         driver = create_driver()
 
+        print("==========================================")
         print("Appium session created successfully")
+        print(f"Device : {DEVICE_NAME}")
+        print(f"Package: {APP_PACKAGE}")
+        print("==========================================")
 
-        # ---------------------------------
-        # 1. Application Launch
-        # ---------------------------------
-
+        # 1. Launch
         print("Step 1: Application launched")
 
         time.sleep(10)
 
-        # Verify package
         current_package = driver.current_package
 
         print(
@@ -121,30 +162,19 @@ def test_app_lifecycle():
             f"but found {current_package}"
         )
 
-        print("Application launch verified")
-
-        # ---------------------------------
         # 2. Wait
-        # ---------------------------------
-
         print("Step 2: Waiting for application")
 
         time.sleep(5)
 
-        # ---------------------------------
         # 3. Background
-        # ---------------------------------
-
         print("Step 3: Sending application to background")
 
         driver.background_app(5)
 
         print("Application backgrounded successfully")
 
-        # ---------------------------------
         # 4. Foreground
-        # ---------------------------------
-
         print("Step 4: Bringing application to foreground")
 
         driver.activate_app(APP_PACKAGE)
@@ -153,10 +183,7 @@ def test_app_lifecycle():
 
         print("Application foregrounded successfully")
 
-        # ---------------------------------
-        # 5. Kill
-        # ---------------------------------
-
+        # 5. Terminate
         print("Step 5: Terminating application")
 
         driver.terminate_app(APP_PACKAGE)
@@ -165,10 +192,7 @@ def test_app_lifecycle():
 
         print("Application terminated successfully")
 
-        # ---------------------------------
         # 6. Relaunch
-        # ---------------------------------
-
         print("Step 6: Relaunching application")
 
         driver.activate_app(APP_PACKAGE)
@@ -185,14 +209,19 @@ def test_app_lifecycle():
             "Application did not relaunch correctly"
         )
 
-        print("Application relaunch verified")
-
         print("--------------------------------")
         print("APP LIFECYCLE TEST PASSED")
         print("--------------------------------")
 
     finally:
 
-        if driver:
+        if driver is not None:
+
             print("Ending Appium session")
-            driver.quit()
+
+            try:
+                driver.quit()
+            except Exception as exc:
+                print(
+                    f"Warning while closing Appium session: {exc}"
+                )
