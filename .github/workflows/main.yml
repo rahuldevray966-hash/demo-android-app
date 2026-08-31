@@ -11,59 +11,100 @@ permissions:
   contents: read
 
 
+# ==========================================================
+# STAGE 1
+# Checkout
+# ==========================================================
+
 jobs:
 
-  # ==========================================================
-  # STAGE 1
-  # Firebase
-  # Authentication + Latest Release + Download + Verify
-  # ==========================================================
-
-  stage-1-firebase:
-
-    name: Stage 1 - Firebase
-
+  checkout:
+    name: "Stage 1 - Checkout"
     runs-on: ubuntu-latest
 
     steps:
 
-      # ------------------------------------------------------
-      # Checkout
-      # ------------------------------------------------------
-
       - name: Checkout repository
-
         uses: actions/checkout@v4
 
 
-      # ------------------------------------------------------
+  # ========================================================
+  # STAGE 2
+  # Firebase
+  # Authentication
+  # Access Token
+  # Latest Release
+  # Download APK
+  # Verify APK
+  # ========================================================
+
+  firebase:
+    name: "Stage 2 - Firebase"
+    runs-on: ubuntu-latest
+    needs: checkout
+
+    steps:
+
+      # ------------------------------------------
+      # Checkout
+      # ------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # ------------------------------------------
       # Firebase Authentication
-      # ------------------------------------------------------
+      # ------------------------------------------
 
       - name: Authenticate with Firebase
-
         uses: google-github-actions/auth@v2
-
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
 
 
-      # ------------------------------------------------------
-      # Get latest Firebase release
-      # ------------------------------------------------------
+      # ------------------------------------------
+      # Get Firebase Access Token
+      # ------------------------------------------
+
+      - name: Get Firebase access token
+        id: firebase-token
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "Getting Firebase access token"
+          echo "=========================================="
+
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+
+          if [ -z "$ACCESS_TOKEN" ]; then
+            echo "ERROR: Firebase access token is empty"
+            exit 1
+          fi
+
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
+
+          echo "Firebase authentication successful"
+
+
+      # ------------------------------------------
+      # Get Latest Firebase Release
+      # ------------------------------------------
 
       - name: Get latest Firebase release
-
         id: firebase-release
-
         shell: bash
 
         env:
           FIREBASE_PROJECT_NUMBER: ${{ secrets.FIREBASE_PROJECT_NUMBER }}
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          ACCESS_TOKEN: ${{ steps.firebase-token.outputs.access_token }}
 
         run: |
-
           set -euo pipefail
 
           echo "=========================================="
@@ -71,11 +112,15 @@ jobs:
           echo "=========================================="
 
           PROJECT_NUMBER="$(printf '%s' "$FIREBASE_PROJECT_NUMBER" | tr -d '[:space:]')"
-
           APP_ID="$(printf '%s' "$FIREBASE_APP_ID" | tr -d '[:space:]')"
 
           if [ -z "$PROJECT_NUMBER" ]; then
             echo "ERROR: FIREBASE_PROJECT_NUMBER is empty"
+            exit 1
+          fi
+
+          if ! [[ "$PROJECT_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: FIREBASE_PROJECT_NUMBER must contain only numbers"
             exit 1
           fi
 
@@ -84,7 +129,10 @@ jobs:
             exit 1
           fi
 
-          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          if [[ "$APP_ID" != *":android:"* ]]; then
+            echo "ERROR: FIREBASE_APP_ID does not look like an Android Firebase App ID"
+            exit 1
+          fi
 
           if [ -z "$ACCESS_TOKEN" ]; then
             echo "ERROR: Firebase access token is empty"
@@ -112,29 +160,28 @@ jobs:
 
           printf '%s\n' "$RESPONSE" > firebase-release.json
 
-          if ! printf '%s' "$RESPONSE" | jq empty >/dev/null 2>&1; then
+          if ! echo "$RESPONSE" | jq empty >/dev/null 2>&1; then
             echo "ERROR: Firebase returned invalid JSON"
             cat firebase-release.json
             exit 1
           fi
 
           DOWNLOAD_URL="$(
-            printf '%s' "$RESPONSE" |
+            echo "$RESPONSE" |
             jq -r '.releases[0].binaryDownloadUri // empty'
           )"
 
           RELEASE_NAME="$(
-            printf '%s' "$RESPONSE" |
+            echo "$RESPONSE" |
             jq -r '.releases[0].name // empty'
           )"
 
           if [ -z "$DOWNLOAD_URL" ]; then
-            echo "ERROR: Firebase release not found"
+            echo "ERROR: No Firebase Android release found"
             cat firebase-release.json
             exit 1
           fi
 
-          echo ""
           echo "=========================================="
           echo "Firebase release found"
           echo "=========================================="
@@ -142,66 +189,54 @@ jobs:
           echo "Release:"
           echo "$RELEASE_NAME"
 
-          echo "Firebase download URL found"
-
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
 
 
-      # ------------------------------------------------------
-      # Download existing APK
-      # ------------------------------------------------------
+      # ------------------------------------------
+      # Download APK
+      # ------------------------------------------
 
       - name: Download APK from Firebase
-
         shell: bash
 
         env:
           DOWNLOAD_URL: ${{ steps.firebase-release.outputs.download_url }}
 
         run: |
-
           set -euo pipefail
 
           echo "=========================================="
-          echo "Downloading existing APK from Firebase"
+          echo "Downloading APK from Firebase"
           echo "=========================================="
-
-          if [ -z "$DOWNLOAD_URL" ]; then
-            echo "ERROR: Firebase download URL is empty"
-            exit 1
-          fi
 
           curl \
             --fail-with-body \
             --location \
-            --silent \
-            --show-error \
             --retry 3 \
             --retry-delay 2 \
+            --silent \
+            --show-error \
             "$DOWNLOAD_URL" \
             --output firebase-app.apk
 
           if [ ! -s firebase-app.apk ]; then
-            echo "ERROR: Firebase APK download failed"
+            echo "ERROR: APK download failed"
             exit 1
           fi
 
-          echo ""
-          echo "Firebase APK downloaded successfully"
+          echo "APK downloaded successfully"
 
           ls -lh firebase-app.apk
 
 
-      # ------------------------------------------------------
+      # ------------------------------------------
       # Verify APK
-      # ------------------------------------------------------
+      # ------------------------------------------
 
       - name: Verify APK
-
         shell: bash
 
         run: |
-
           set -euo pipefail
 
           echo "=========================================="
@@ -218,56 +253,36 @@ jobs:
           fi
 
           echo "APK size: ${APK_SIZE} bytes"
-
           echo "APK verification successful"
 
 
-      # ------------------------------------------------------
-      # Upload APK for next stage
-      # ------------------------------------------------------
+      # ------------------------------------------
+      # Save Firebase files
+      # ------------------------------------------
 
-      - name: Upload Firebase APK artifact
-
+      - name: Upload Firebase artifacts
         uses: actions/upload-artifact@v4
 
         with:
           name: firebase-apk
-          path: firebase-app.apk
-          retention-days: 5
+          path: |
+            firebase-app.apk
+            firebase-release.json
 
 
-      # ------------------------------------------------------
-      # Upload release JSON
-      # ------------------------------------------------------
-
-      - name: Upload Firebase release information
-
-        uses: actions/upload-artifact@v4
-
-        with:
-          name: firebase-release
-          path: firebase-release.json
-          retention-days: 5
-
-
-  # ==========================================================
-  # STAGE 2
+  # ========================================================
+  # STAGE 3
   # pCloudy Authentication
-  # ==========================================================
+  # ========================================================
 
-  stage-2-pcloudy-auth:
-
-    name: Stage 2 - pCloudy Authentication
-
-    needs:
-      - stage-1-firebase
-
+  pcloudy-auth:
+    name: "Stage 3 - pCloudy Authentication"
     runs-on: ubuntu-latest
+    needs: firebase
 
     steps:
 
       - name: Authenticate with pCloudy
-
         shell: bash
 
         env:
@@ -275,11 +290,10 @@ jobs:
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
         run: |
-
           set -euo pipefail
 
           echo "=========================================="
-          echo "pCloudy Authentication"
+          echo "Authenticating with pCloudy"
           echo "=========================================="
 
           if [ -z "$PCLOUDY_EMAIL" ]; then
@@ -301,14 +315,13 @@ jobs:
               "https://device.pcloudy.com/api/access"
           )"
 
-          TOKEN="$(
-            printf '%s' "$RESPONSE" |
-            jq -r '.result.token // empty'
-          )"
+          echo "$RESPONSE" > pcloudy-auth.json
+
+          TOKEN="$(echo "$RESPONSE" | jq -r '.result.token // empty')"
 
           if [ -z "$TOKEN" ]; then
-            echo "ERROR: pCloudy authentication failed"
-            echo "$RESPONSE"
+            echo "ERROR: Could not extract pCloudy token"
+            cat pcloudy-auth.json
             exit 1
           fi
 
@@ -316,25 +329,27 @@ jobs:
 
           echo "pCloudy authentication successful"
 
+      - name: Upload pCloudy authentication response
+        uses: actions/upload-artifact@v4
 
-  # ==========================================================
-  # STAGE 3
-  # Get pCloudy Device List
-  # ==========================================================
+        with:
+          name: pcloudy-auth
+          path: pcloudy-auth.json
 
-  stage-3-pcloudy-device-list:
 
-    name: Stage 3 - pCloudy Device List
+  # ========================================================
+  # STAGE 4
+  # pCloudy Device List
+  # ========================================================
 
-    needs:
-      - stage-2-pcloudy-auth
-
+  device-list:
+    name: "Stage 4 - pCloudy Device List"
     runs-on: ubuntu-latest
+    needs: pcloudy-auth
 
     steps:
 
-      - name: Get available Android devices
-
+      - name: Get available pCloudy Android devices
         shell: bash
 
         env:
@@ -342,11 +357,10 @@ jobs:
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
         run: |
-
           set -euo pipefail
 
           echo "=========================================="
-          echo "Getting pCloudy Android devices"
+          echo "Getting pCloudy Android device list"
           echo "=========================================="
 
           AUTH_RESPONSE="$(
@@ -358,13 +372,11 @@ jobs:
               "https://device.pcloudy.com/api/access"
           )"
 
-          TOKEN="$(
-            printf '%s' "$AUTH_RESPONSE" |
-            jq -r '.result.token // empty'
-          )"
+          TOKEN="$(echo "$AUTH_RESPONSE" | jq -r '.result.token // empty')"
 
           if [ -z "$TOKEN" ]; then
             echo "ERROR: pCloudy authentication failed"
+            echo "$AUTH_RESPONSE"
             exit 1
           fi
 
@@ -374,192 +386,144 @@ jobs:
             curl \
               --silent \
               --show-error \
+              --fail-with-body \
               --request POST \
               --header "Content-Type: application/json" \
               --data "{\"token\":\"${TOKEN}\",\"duration\":15,\"platform\":\"Android\",\"available_now\":true}" \
               "https://device.pcloudy.com/api/devices"
           )"
 
-          printf '%s\n' "$RESPONSE" > pcloudy-devices.json
+          echo "$RESPONSE" > pcloudy-devices.json
 
           echo ""
           echo "=========================================="
-          echo "RAW pCloudy Device Response"
+          echo "RAW pCloudy Android device response"
           echo "=========================================="
 
           cat pcloudy-devices.json
 
           echo ""
           echo "=========================================="
-          echo "Available Android Devices"
+          echo "Available Android devices"
           echo "=========================================="
 
           jq -r '
-            .. |
-            objects |
-            select(.full_name? != null) |
-            "\(.full_name) | available=\(.available)"
-          ' pcloudy-devices.json 2>/dev/null || true
+            .result.models[]?
+            | select(.available == true)
+            | "\(.full_name) | available=\(.available)"
+          ' pcloudy-devices.json || true
 
-          echo ""
-          echo "pCloudy device list generated successfully"
-
-
-      - name: Upload pCloudy device JSON
-
+      - name: Upload device list
         uses: actions/upload-artifact@v4
 
         with:
-          name: pcloudy-devices
+          name: pcloudy-device-list
           path: pcloudy-devices.json
-          retention-days: 5
 
 
-  # ==========================================================
-  # STAGE 4
-  # Select One Available Device
-  # ==========================================================
+  # ========================================================
+  # STAGE 5
+  # Select ONE available Android device
+  # ========================================================
 
-  stage-4-select-device:
-
-    name: Stage 4 - Select Device from JSON
-
-    needs:
-      - stage-3-pcloudy-device-list
-
+  select-device:
+    name: "Stage 5 - Select Device"
     runs-on: ubuntu-latest
+    needs: device-list
+
+    outputs:
+      device: ${{ steps.select.outputs.device }}
 
     steps:
 
-      - name: Download pCloudy device JSON
-
+      - name: Download device list
         uses: actions/download-artifact@v4
 
         with:
-          name: pcloudy-devices
+          name: pcloudy-device-list
+          path: .
 
 
       - name: Select first available Android device
-
+        id: select
         shell: bash
 
         run: |
-
           set -euo pipefail
 
           echo "=========================================="
           echo "Selecting Device from JSON"
           echo "=========================================="
 
-          echo ""
           echo "Available devices:"
           echo ""
 
           jq -r '
-            .. |
-            objects |
-            select(.full_name? != null) |
-            "\(.full_name) | available=\(.available)"
+            .result.models[]?
+            | select(.available == true)
+            | "\(.full_name) | available=\(.available)"
           ' pcloudy-devices.json
-
 
           echo ""
           echo "=========================================="
-          echo "Searching for available Android device"
+          echo "Selecting first available Android device"
           echo "=========================================="
 
-
-          SELECTED_DEVICE="$(
+          DEVICE="$(
             jq -r '
-              .. |
-              objects |
-              select(
-                .full_name? != null
-                and
-                (.platform? | ascii_downcase) == "android"
-                and
-                .available == true
-              ) |
-              .full_name
+              .result.models[]?
+              | select(
+                  .available == true
+                  and (.platform | ascii_downcase) == "android"
+                )
+              | .full_name
             ' pcloudy-devices.json |
             head -n 1
           )"
 
-
-          if [ -z "$SELECTED_DEVICE" ]; then
-
+          if [ -z "$DEVICE" ]; then
             echo "ERROR: No available Android device found"
-
-            echo ""
-            echo "Available devices:"
-
-            jq -r '
-              .. |
-              objects |
-              select(.full_name? != null) |
-              .full_name
-            ' pcloudy-devices.json
-
             exit 1
-
           fi
 
+          echo "Selected device:"
+          echo "$DEVICE"
 
-          echo ""
-          echo "=========================================="
-          echo "Selected Device"
-          echo "=========================================="
+          echo "$DEVICE" > selected-device.txt
 
-          echo "$SELECTED_DEVICE"
-
-
-          printf '%s\n' "$SELECTED_DEVICE" > selected-device.txt
-
+          echo "device=$DEVICE" >> "$GITHUB_OUTPUT"
 
       - name: Upload selected device
-
         uses: actions/upload-artifact@v4
 
         with:
           name: selected-device
           path: selected-device.txt
-          retention-days: 5
 
 
-  # ==========================================================
-  # STAGE 5
+  # ========================================================
+  # STAGE 6
   # Upload APK to pCloudy
-  # ==========================================================
+  # ========================================================
 
-  stage-5-upload-apk:
-
-    name: Stage 5 - Upload APK to pCloudy
-
-    needs:
-      - stage-4-select-device
-
+  upload-apk:
+    name: "Stage 6 - Upload APK to pCloudy"
     runs-on: ubuntu-latest
+    needs:
+      - firebase
+      - select-device
 
     steps:
 
       - name: Download Firebase APK
-
         uses: actions/download-artifact@v4
 
         with:
           name: firebase-apk
-
-
-      - name: Download selected device
-
-        uses: actions/download-artifact@v4
-
-        with:
-          name: selected-device
+          path: firebase
 
 
       - name: Upload APK to pCloudy
-
         shell: bash
 
         env:
@@ -567,25 +531,16 @@ jobs:
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
         run: |
-
           set -euo pipefail
 
           echo "=========================================="
           echo "Uploading Firebase APK to pCloudy"
           echo "=========================================="
 
-          DEVICE="$(cat selected-device.txt)"
-
-          echo ""
-          echo "Selected device:"
-          echo "$DEVICE"
-
-
-          if [ ! -s firebase-app.apk ]; then
-            echo "ERROR: firebase-app.apk not found"
+          if [ ! -s firebase/firebase-app.apk ]; then
+            echo "ERROR: Firebase APK not found"
             exit 1
           fi
-
 
           AUTH_RESPONSE="$(
             curl \
@@ -596,21 +551,14 @@ jobs:
               "https://device.pcloudy.com/api/access"
           )"
 
-
-          TOKEN="$(
-            printf '%s' "$AUTH_RESPONSE" |
-            jq -r '.result.token // empty'
-          )"
-
+          TOKEN="$(echo "$AUTH_RESPONSE" | jq -r '.result.token // empty')"
 
           if [ -z "$TOKEN" ]; then
-            echo "ERROR: pCloudy authentication failed"
+            echo "ERROR: Could not get pCloudy token"
             exit 1
           fi
 
-
           echo "::add-mask::$TOKEN"
-
 
           HTTP_CODE="$(
             curl \
@@ -619,79 +567,44 @@ jobs:
               -o pcloudy-upload.json \
               -w "%{http_code}" \
               --request POST \
-              -F "file=@firebase-app.apk" \
+              -F "file=@firebase/firebase-app.apk" \
               -F "source_type=raw" \
               -F "token=${TOKEN}" \
               -F "filter=all" \
               "https://device.pcloudy.com/api/upload_file"
           )"
 
-
-          echo ""
-          echo "pCloudy upload HTTP status: ${HTTP_CODE}"
-
+          echo "pCloudy upload HTTP status: $HTTP_CODE"
 
           if [ "$HTTP_CODE" != "200" ]; then
-
             echo "ERROR: pCloudy APK upload failed"
-
             cat pcloudy-upload.json
-
             exit 1
-
           fi
 
-
-          echo ""
-          echo "=========================================="
           echo "APK uploaded to pCloudy successfully"
-          echo "=========================================="
-
 
       - name: Upload pCloudy upload response
-
-        if: always()
-
         uses: actions/upload-artifact@v4
 
         with:
-          name: pcloudy-upload-result
+          name: pcloudy-upload
           path: pcloudy-upload.json
-          retention-days: 5
-          if-no-files-found: warn
 
 
-  # ==========================================================
-  # STAGE 6
-  # Run Appium Test
-  # ==========================================================
+  # ========================================================
+  # STAGE 7
+  # Python + Appium dependencies
+  # ========================================================
 
-  stage-6-appium:
-
-    name: Stage 6 - Appium Test
-
-    needs:
-      - stage-5-upload-apk
-
+  appium-dependencies:
+    name: "Stage 7 - Appium Dependencies"
     runs-on: ubuntu-latest
+    needs: upload-apk
 
     steps:
 
-      - name: Checkout repository
-
-        uses: actions/checkout@v4
-
-
-      - name: Download selected device
-
-        uses: actions/download-artifact@v4
-
-        with:
-          name: selected-device
-
-
       - name: Setup Python
-
         uses: actions/setup-python@v6
 
         with:
@@ -699,79 +612,111 @@ jobs:
 
 
       - name: Install Appium dependencies
-
         shell: bash
 
         run: |
-
           set -euo pipefail
 
           echo "=========================================="
           echo "Installing Appium dependencies"
           echo "=========================================="
 
+          python -m pip install --upgrade pip
+
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+          # Required for --html and --self-contained-html
+          pip install \
+            Appium-Python-Client \
+            selenium \
+            pytest \
+            pytest-html
+
+          echo ""
+          echo "Installed packages:"
+          pip list
+
+
+  # ========================================================
+  # STAGE 8
+  # Run Appium lifecycle test
+  # ========================================================
+
+  appium-test:
+    name: "Stage 8 - Appium Lifecycle Test"
+    runs-on: ubuntu-latest
+    needs:
+      - select-device
+      - upload-apk
+      - appium-dependencies
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+
+        with:
+          python-version: "3.12"
+
+
+      - name: Install Appium dependencies
+        shell: bash
+
+        run: |
+          set -euo pipefail
 
           python -m pip install --upgrade pip
 
-
           if [ -f requirements.txt ]; then
-
             pip install -r requirements.txt
-
-          else
-
-            pip install \
-              Appium-Python-Client \
-              selenium \
-              pytest \
-              pytest-html
-
           fi
 
+          pip install \
+            Appium-Python-Client \
+            selenium \
+            pytest \
+            pytest-html
 
-          echo "Appium dependencies installed successfully"
+
+      - name: Download selected device
+        uses: actions/download-artifact@v4
+
+        with:
+          name: selected-device
+          path: .
 
 
       - name: Run Appium lifecycle test
-
         shell: bash
 
         env:
-
           PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
-
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
           APP_PACKAGE: com.epam.mobitru
 
-          PCLOUDY_APPLICATION_NAME: firebase-app.apk
-
         run: |
-
           set -euo pipefail
-
 
           PCLOUDY_DEVICE="$(cat selected-device.txt)"
 
           export PCLOUDY_DEVICE
 
-
-          echo ""
           echo "=========================================="
           echo "Starting Appium lifecycle test"
           echo "=========================================="
 
-
           echo "Device : $PCLOUDY_DEVICE"
-
           echo "Package: $APP_PACKAGE"
+          echo "App    : firebase-app.apk"
 
-          echo "App    : $PCLOUDY_APPLICATION_NAME"
-
-
-          echo ""
           echo "=========================================="
-
 
           pytest \
             automation/test_app_lifecycle.py \
@@ -781,32 +726,86 @@ jobs:
             --html=appium-report.html \
             --self-contained-html
 
-
           echo ""
           echo "=========================================="
-          echo "APP LIFECYCLE TEST PASSED"
+          echo "Appium lifecycle test completed successfully"
           echo "=========================================="
 
 
-      # ------------------------------------------------------
-      # Upload results
-      # ------------------------------------------------------
+      # ------------------------------------------
+      # Upload Appium results
+      # ------------------------------------------
 
       - name: Upload Appium test results
-
         if: always()
-
         uses: actions/upload-artifact@v4
 
         with:
-
-          name: appium-test-results
-
+          name: appium-results
           path: |
             appium-results.xml
             appium-report.html
             selected-device.txt
+          if-no-files-found: warn
 
-          retention-days: 5
 
+  # ========================================================
+  # STAGE 9
+  # Final Results
+  # ========================================================
+
+  results:
+    name: "Stage 9 - Final Results"
+    runs-on: ubuntu-latest
+    needs: appium-test
+    if: always()
+
+    steps:
+
+      - name: Download Appium results
+        uses: actions/download-artifact@v4
+
+        with:
+          name: appium-results
+          path: results
+
+
+      - name: Display final result
+        shell: bash
+
+        run: |
+          echo "=========================================="
+          echo "Task 4 Final Result"
+          echo "=========================================="
+
+          if [ -f results/selected-device.txt ]; then
+            echo "Device:"
+            cat results/selected-device.txt
+          fi
+
+          echo ""
+
+          if [ -f results/appium-results.xml ]; then
+            echo "JUnit result:"
+            echo "appium-results.xml available"
+          fi
+
+          if [ -f results/appium-report.html ]; then
+            echo "HTML report:"
+            echo "appium-report.html available"
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "Results are available in GitHub Actions Artifacts"
+          echo "=========================================="
+
+
+      - name: Upload final Task 4 results
+        if: always()
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: Task-4-final-results
+          path: results/
           if-no-files-found: warn
