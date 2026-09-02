@@ -52,11 +52,11 @@ def create_driver():
     )
 
     # ============================================================
-    # pCloudy App Performance Testing
+    # pCloudy Performance Data
     # ============================================================
 
     options.set_capability(
-        "appPerformance",
+        "pCloudy_EnablePerformanceData",
         True
     )
 
@@ -94,7 +94,12 @@ def create_driver():
         300
     )
 
-    print(f"Starting Appium session on: {DEVICE_NAME}")
+    print("==========================================")
+    print("Starting pCloudy Appium session")
+    print(f"Device : {DEVICE_NAME}")
+    print(f"Package: {APP_PACKAGE}")
+    print("Performance Data: ENABLED")
+    print("==========================================")
 
     last_error = None
 
@@ -151,17 +156,21 @@ def test_app_lifecycle():
 
     try:
 
+        # ========================================================
+        # Create Appium Session
+        # ========================================================
+
         driver = create_driver()
 
         print("==========================================")
         print("Appium session created successfully")
         print(f"Device : {DEVICE_NAME}")
         print(f"Package: {APP_PACKAGE}")
-        print("Performance Testing: ENABLED")
+        print("Performance Data: ENABLED")
         print("==========================================")
 
         # ========================================================
-        # 1. Launch
+        # 1. Launch Application
         # ========================================================
 
         print("Step 1: Application launched")
@@ -179,8 +188,10 @@ def test_app_lifecycle():
             f"but found {current_package}"
         )
 
+        print("Application launch verified")
+
         # ========================================================
-        # 2. Wait
+        # 2. Wait for Application
         # ========================================================
 
         print("Step 2: Waiting for application")
@@ -188,7 +199,7 @@ def test_app_lifecycle():
         time.sleep(5)
 
         # ========================================================
-        # 3. Background
+        # 3. Background Application
         # ========================================================
 
         print("Step 3: Sending application to background")
@@ -198,7 +209,7 @@ def test_app_lifecycle():
         print("Application backgrounded successfully")
 
         # ========================================================
-        # 4. Foreground
+        # 4. Bring Application to Foreground
         # ========================================================
 
         print("Step 4: Bringing application to foreground")
@@ -210,7 +221,7 @@ def test_app_lifecycle():
         print("Application foregrounded successfully")
 
         # ========================================================
-        # 5. Terminate
+        # 5. Terminate Application
         # ========================================================
 
         print("Step 5: Terminating application")
@@ -222,7 +233,7 @@ def test_app_lifecycle():
         print("Application terminated successfully")
 
         # ========================================================
-        # 6. Relaunch
+        # 6. Relaunch Application
         # ========================================================
 
         print("Step 6: Relaunching application")
@@ -241,18 +252,27 @@ def test_app_lifecycle():
             "Application did not relaunch correctly"
         )
 
+        print("Application relaunch verified")
+
         print("--------------------------------")
         print("APP LIFECYCLE TEST PASSED")
         print("--------------------------------")
 
     finally:
 
+        # ========================================================
+        # Close Appium Session
+        # ========================================================
+
         if driver is not None:
 
             print("Ending Appium session")
 
             try:
+
                 driver.quit()
+
+                print("Appium session closed successfully")
 
             except Exception as exc:
 
