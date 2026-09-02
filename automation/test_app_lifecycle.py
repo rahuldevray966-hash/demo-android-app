@@ -22,7 +22,10 @@ def create_driver():
 
     options = UiAutomator2Options()
 
-    # pCloudy
+    # ============================================================
+    # pCloudy Configuration
+    # ============================================================
+
     options.set_capability(
         "pCloudy_Username",
         PCLOUDY_EMAIL
@@ -48,7 +51,19 @@ def create_driver():
         15
     )
 
-    # Android
+    # ============================================================
+    # pCloudy App Performance Testing
+    # ============================================================
+
+    options.set_capability(
+        "appPerformance",
+        True
+    )
+
+    # ============================================================
+    # Android Configuration
+    # ============================================================
+
     options.set_capability(
         "platformName",
         "Android"
@@ -76,18 +91,16 @@ def create_driver():
 
     options.set_capability(
         "appium:newCommandTimeout",
-        120
-    )
-
-    # Give pCloudy enough time to create the session
-    options.set_capability(
-        "appium:newCommandTimeout",
         300
     )
 
     print(f"Starting Appium session on: {DEVICE_NAME}")
 
     last_error = None
+
+    # ============================================================
+    # Retry Appium Session
+    # ============================================================
 
     for attempt in range(1, 4):
 
@@ -144,9 +157,13 @@ def test_app_lifecycle():
         print("Appium session created successfully")
         print(f"Device : {DEVICE_NAME}")
         print(f"Package: {APP_PACKAGE}")
+        print("Performance Testing: ENABLED")
         print("==========================================")
 
+        # ========================================================
         # 1. Launch
+        # ========================================================
+
         print("Step 1: Application launched")
 
         time.sleep(10)
@@ -162,19 +179,28 @@ def test_app_lifecycle():
             f"but found {current_package}"
         )
 
+        # ========================================================
         # 2. Wait
+        # ========================================================
+
         print("Step 2: Waiting for application")
 
         time.sleep(5)
 
+        # ========================================================
         # 3. Background
+        # ========================================================
+
         print("Step 3: Sending application to background")
 
         driver.background_app(5)
 
         print("Application backgrounded successfully")
 
+        # ========================================================
         # 4. Foreground
+        # ========================================================
+
         print("Step 4: Bringing application to foreground")
 
         driver.activate_app(APP_PACKAGE)
@@ -183,7 +209,10 @@ def test_app_lifecycle():
 
         print("Application foregrounded successfully")
 
+        # ========================================================
         # 5. Terminate
+        # ========================================================
+
         print("Step 5: Terminating application")
 
         driver.terminate_app(APP_PACKAGE)
@@ -192,7 +221,10 @@ def test_app_lifecycle():
 
         print("Application terminated successfully")
 
+        # ========================================================
         # 6. Relaunch
+        # ========================================================
+
         print("Step 6: Relaunching application")
 
         driver.activate_app(APP_PACKAGE)
@@ -221,7 +253,9 @@ def test_app_lifecycle():
 
             try:
                 driver.quit()
+
             except Exception as exc:
+
                 print(
                     f"Warning while closing Appium session: {exc}"
                 )
