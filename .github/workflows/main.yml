@@ -474,42 +474,35 @@ jobs:
   # JOB 5
   # Upload APK to pCloudy
   # ============================================================
-
   upload-apk:
     name: Stage 5 - Upload APK to pCloudy
     runs-on: ubuntu-latest
-
     needs:
       - firebase
       - pcloudy-auth
       - select-devices
 
-    steps:
+    # Export the instrumented app name so Job 7 can use it
+    outputs:
+      app_name: ${{ steps.instrument.outputs.PCLOUDY_APP_NAME }}
 
+    steps:
       - name: Download Firebase APK
         uses: actions/download-artifact@v4
-
         with:
           name: firebase-apk
 
-
       - name: Upload APK to pCloudy
+        id: upload
         shell: bash
-
         env:
           PCLOUDY_TOKEN: ${{ needs.pcloudy-auth.outputs.token }}
-
         run: |
           set -euo pipefail
 
           echo "=========================================="
           echo "Uploading Firebase APK to pCloudy"
           echo "=========================================="
-
-          if [ ! -s firebase-app.apk ]; then
-            echo "ERROR: firebase-app.apk not found"
-            exit 1
-          fi
 
           HTTP_CODE="$(
             curl \
@@ -525,25 +518,77 @@ jobs:
               "https://device.pcloudy.com/api/upload_file"
           )"
 
-          echo "pCloudy upload HTTP status: ${HTTP_CODE}"
-
           if [ "$HTTP_CODE" != "200" ]; then
             echo "ERROR: pCloudy APK upload failed"
             cat pcloudy-upload.json
             exit 1
           fi
 
-          echo "APK uploaded to pCloudy successfully"
+          # Extract the server-side uploaded filename assigned by pCloudy
+          UPLOADED_FILE="$(jq -r '.result.file' pcloudy-upload.json)"
+          echo "Uploaded File: $UPLOADED_FILE"
+          
+          # Pass to next step
+          echo "uploaded_file=$UPLOADED_FILE" >> "$GITHUB_OUTPUT"
 
+      - name: Instrument / Resign APK
+        id: instrument
+        shell: bash
+        env:
+          PCLOUDY_TOKEN: ${{ needs.pcloudy-auth.outputs.token }}
+          UPLOADED_FILE: ${{ steps.upload.outputs.uploaded_file }}
+        run: |
+          set -euo pipefail
 
-      - name: Upload pCloudy upload response
+          echo "=========================================="
+          echo "Instrumenting APK for Performance Data"
+          echo "=========================================="
+
+          HTTP_CODE="$(
+            curl \
+              --silent \
+              --show-error \
+              --output pcloudy-instrument.json \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "Content-Type: application/json" \
+              --data "{
+                \"token\": \"${PCLOUDY_TOKEN}\",
+                \"filename\": \"${UPLOADED_FILE}\"
+              }" \
+              "https://device.pcloudy.com/api/instrument"
+          )"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Instrumentation failed"
+            cat pcloudy-instrument.json
+            exit 1
+          fi
+
+          # Extract the new instrumented filename 
+          INSTRUMENTED_FILE="$(jq -r '.result.instrumented_file // .result.file' pcloudy-instrument.json)"
+          
+          if [ -z "$INSTRUMENTED_FILE" ] || [ "$INSTRUMENTED_FILE" == "null" ]; then
+             echo "ERROR: Could not parse instrumented file name."
+             cat pcloudy-instrument.json
+             exit 1
+          fi
+
+          echo "Instrumented File: $INSTRUMENTED_FILE"
+          
+          # Export to GITHUB_OUTPUT for Job 7
+          echo "PCLOUDY_APP_NAME=$INSTRUMENTED_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Upload API responses
         if: always()
         uses: actions/upload-artifact@v4
-
         with:
-          name: pcloudy-upload-response
-          path: pcloudy-upload.json
+          name: pcloudy-api-responses
+          path: |
+            pcloudy-upload.json
+            pcloudy-instrument.json
           if-no-files-found: warn
+
 
 
 

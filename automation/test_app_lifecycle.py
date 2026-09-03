@@ -364,6 +364,23 @@ def test_app_lifecycle():
 
             try:
 
+                # Retrieve the pCloudy web report URL programmatically
+                report_link = driver.execute_script("Pcloudy_getReportLink")
+                print("")
+                print("==================================================")
+                print("PCLOUDY LIVE PERFORMANCE REPORT LINK:")
+                print(report_link)
+                print("==================================================")
+                print("")
+
+            except Exception as r_exc:
+
+                print(
+                    f"Warning: Could not retrieve report link programmatically: {r_exc}"
+                )
+
+            try:
+
                 driver.quit()
 
                 print(
