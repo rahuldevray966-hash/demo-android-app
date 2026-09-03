@@ -23,6 +23,11 @@ DEVICE_NAME = os.getenv(
 PCLOUDY_EMAIL = os.environ["PCLOUDY_EMAIL"]
 PCLOUDY_ACCESS_KEY = os.environ["PCLOUDY_ACCESS_KEY"]
 
+PCLOUDY_APP_NAME = os.getenv(
+    "PCLOUDY_APP_NAME",
+    "firebase-app.apk"
+)
+
 PCLOUDY_APPIUM_URL = (
     "https://device.pcloudy.com/appiumcloud/wd/hub"
 )
@@ -56,45 +61,7 @@ def create_driver():
     options = UiAutomator2Options()
 
     # ========================================================
-    # pCloudy Configuration
-    # ========================================================
-
-    options.set_capability(
-        "pCloudy_Username",
-        PCLOUDY_EMAIL
-    )
-
-    options.set_capability(
-        "pCloudy_ApiKey",
-        PCLOUDY_ACCESS_KEY
-    )
-
-    options.set_capability(
-        "pCloudy_ApplicationName",
-        "firebase-app.apk"
-    )
-
-    options.set_capability(
-        "pCloudy_DeviceFullName",
-        DEVICE_NAME
-    )
-
-    options.set_capability(
-        "pCloudy_DurationInMinutes",
-        15
-    )
-
-    # ========================================================
-    # pCloudy Performance Data
-    # ========================================================
-
-    options.set_capability(
-        "pCloudy_EnablePerformanceData",
-        PERFORMANCE_DATA
-    )
-
-    # ========================================================
-    # Android Configuration
+    # Standard W3C Android Capabilities
     # ========================================================
 
     options.set_capability(
@@ -124,7 +91,33 @@ def create_driver():
 
     options.set_capability(
         "appium:newCommandTimeout",
-        300
+        600
+    )
+
+    options.set_capability(
+        "appium:launchTimeout",
+        90000
+    )
+
+    # ========================================================
+    # Nested pCloudy Options (W3C Compliant)
+    # ========================================================
+
+    pcloudy_opts = {
+        "pCloudy_Username": PCLOUDY_EMAIL,
+        "pCloudy_ApiKey": PCLOUDY_ACCESS_KEY,
+        "pCloudy_ApplicationName": PCLOUDY_APP_NAME,
+        "pCloudy_DeviceFullName": DEVICE_NAME,
+        "pCloudy_DurationInMinutes": 10,
+        "pCloudy_EnableVideo": False,
+        "pCloudy_EnablePerformanceData": PERFORMANCE_DATA,
+        "pCloudy_EnableDeviceLogs": False,
+        "appiumVersion": "3.1.1"
+    }
+
+    options.set_capability(
+        "pcloudy:options",
+        pcloudy_opts
     )
 
     # ========================================================
