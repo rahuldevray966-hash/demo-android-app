@@ -506,6 +506,7 @@ jobs:
 
           HTTP_CODE="$(
             curl \
+              --location \
               --silent \
               --show-error \
               --output pcloudy-upload.json \
@@ -546,6 +547,7 @@ jobs:
 
           HTTP_CODE="$(
             curl \
+              --location \
               --silent \
               --show-error \
               --output pcloudy-instrument.json \
