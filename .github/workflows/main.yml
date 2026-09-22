@@ -577,7 +577,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Validate customer config
+      # Validate customer devices.json
       # --------------------------------------------------------
 
       - name: Validate customer device configuration
@@ -623,7 +623,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Fresh pCloudy authentication
+      # Fresh pCloudy Authentication
       # --------------------------------------------------------
 
       - name: Authenticate with pCloudy
@@ -702,7 +702,7 @@ jobs:
 
 
           # ==================================================
-          # Get FRESH device list
+          # Get fresh pCloudy device list
           # ==================================================
 
           echo ""
@@ -789,7 +789,7 @@ jobs:
               echo "$DEVICE_NAME"
 
               echo ""
-              echo "Available matching names:"
+              echo "Available device names:"
 
               jq -r '
                 ..
@@ -813,19 +813,24 @@ jobs:
             echo ""
             echo "[2/7] Booking device"
 
+            # IMPORTANT:
+            # pCloudy booking payload uses "id" for device ID.
+            # Do NOT change this back to "device".
+
             BOOK_PAYLOAD="$(
               jq -n \
                 --arg token "$PCLOUDY_TOKEN" \
-                --arg device "$DEVICE_ID" \
+                --arg id "$DEVICE_ID" \
                 --argjson duration "$PCLOUDY_DURATION" \
                 '{
                   token: $token,
-                  device: $device,
+                  id: $id,
                   duration: $duration
                 }'
             )"
 
             echo "Booking request:"
+
             echo "$BOOK_PAYLOAD" |
               jq 'del(.token)'
 
@@ -845,12 +850,14 @@ jobs:
 
             echo "Book response saved"
 
+            echo ""
             echo "Booking response:"
+
             cat "${DEVICE_DIR}/book-response.json"
 
 
             # ==================================================
-            # Extract reservation ID
+            # Extract Reservation ID
             # ==================================================
 
             RID="$(
@@ -870,13 +877,13 @@ jobs:
               echo ""
               echo "ERROR: Could not extract reservation ID"
 
+              echo ""
               echo "Full booking response:"
+
               cat "${DEVICE_DIR}/book-response.json"
 
               echo ""
-              echo "NOTE:"
-              echo "The exact pCloudy booking API response has been"
-              echo "saved as an artifact for diagnosis."
+              echo "The booking response has been saved."
 
               exit 1
 
@@ -918,7 +925,8 @@ jobs:
             printf '%s\n' "$PERFORMANCE_RESPONSE" \
               > "${DEVICE_DIR}/performance-start.json"
 
-            echo "Performance monitoring response:"
+            echo "Performance response:"
+
             cat "${DEVICE_DIR}/performance-start.json"
 
             echo "Performance monitoring started"
@@ -1078,6 +1086,11 @@ jobs:
 
             echo "Device released"
 
+
+            # ==================================================
+            # Device Completed
+            # ==================================================
+
             echo ""
             echo "##################################################"
             echo "Device completed"
@@ -1087,14 +1100,10 @@ jobs:
             echo "RID    : $RID"
             echo "Result : $TEST_EXIT_CODE"
 
-
-            # --------------------------------------------------
-            # Continue to next device
-            # --------------------------------------------------
+            echo ""
 
             if [ "$TEST_EXIT_CODE" -ne 0 ]; then
 
-              echo ""
               echo "WARNING: Appium test failed on $DEVICE_NAME"
               echo "Continuing to next configured device..."
 
@@ -1104,7 +1113,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Upload all results
+      # Upload Results
       # --------------------------------------------------------
 
       - name: Upload Appium and Performance Results
