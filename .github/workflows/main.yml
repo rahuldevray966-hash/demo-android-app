@@ -3,7 +3,7 @@ name: Task 4 - Firebase to pCloudy Sequential Appium
 on:
 push:
 branches:
-\- main
+- main
 
 workflow_dispatch:
 
