@@ -69,8 +69,11 @@ jobs:
           ACCESS_TOKEN="$(gcloud auth print-access-token)"
 
           if [ -z "$ACCESS_TOKEN" ]; then
+
             echo "ERROR: Firebase access token is empty"
+
             exit 1
+
           fi
 
           echo "::add-mask::$ACCESS_TOKEN"
@@ -115,13 +118,19 @@ jobs:
           )"
 
           if [ -z "$PROJECT_NUMBER" ]; then
+
             echo "ERROR: FIREBASE_PROJECT_NUMBER is empty"
+
             exit 1
+
           fi
 
           if [ -z "$APP_ID" ]; then
+
             echo "ERROR: FIREBASE_APP_ID is empty"
+
             exit 1
+
           fi
 
           API_URL="https://firebaseappdistribution.googleapis.com/v1/projects/${PROJECT_NUMBER}/apps/${APP_ID}/releases"
@@ -264,11 +273,8 @@ jobs:
     runs-on: ubuntu-latest
 
     needs:
+
       - firebase
-
-    outputs:
-
-      token: ${{ steps.auth.outputs.token }}
 
     steps:
 
@@ -332,7 +338,7 @@ jobs:
             jq -r '.result.token // empty'
           )"
 
-          if [ -z "$TOKEN" ]; then
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
 
             echo "ERROR: pCloudy authentication failed"
 
@@ -353,7 +359,7 @@ jobs:
       # Get Available Android Devices
       # --------------------------------------------------------
 
-      - name: Get pCloudy device list
+      - name: Get pCloudy Android device list
 
         env:
 
@@ -444,11 +450,11 @@ jobs:
               "https://device.pcloudy.com/api/upload_file"
           )"
 
-          echo "HTTP status: $HTTP_CODE"
+          echo "pCloudy upload HTTP status: ${HTTP_CODE}"
 
           if [ "$HTTP_CODE" != "200" ]; then
 
-            echo "ERROR: pCloudy upload failed"
+            echo "ERROR: pCloudy APK upload failed"
 
             cat pcloudy-upload.json
 
@@ -460,7 +466,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Store pCloudy information
+      # Upload pCloudy setup artifacts
       # --------------------------------------------------------
 
       - name: Upload pCloudy setup artifacts
@@ -477,6 +483,8 @@ jobs:
             pcloudy-devices.json
             pcloudy-auth.json
             pcloudy-upload.json
+
+          if-no-files-found: warn
 
 
 # ============================================================
@@ -507,7 +515,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Download APK
+      # Download Firebase APK
       # --------------------------------------------------------
 
       - name: Download Firebase APK
@@ -546,7 +554,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Install dependencies
+      # Install Appium dependencies
       # --------------------------------------------------------
 
       - name: Install Appium dependencies
@@ -571,7 +579,67 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Validate config/devices.json
+      # Fresh pCloudy Authentication
+      #
+      # IMPORTANT:
+      # Do NOT reuse the token from Job 2.
+      # This job creates its own fresh token.
+      # --------------------------------------------------------
+
+      - name: Authenticate with pCloudy for device tests
+
+        id: device-auth
+
+        env:
+
+          PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
+
+          PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
+
+        run: |
+
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "Authenticating with pCloudy"
+          echo "for device testing"
+          echo "=========================================="
+
+          RESPONSE="$(
+            curl \
+              --silent \
+              --show-error \
+              --fail-with-body \
+              -u "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
+              "https://device.pcloudy.com/api/access"
+          )"
+
+          printf '%s\n' "$RESPONSE" > device-pcloudy-auth.json
+
+          TOKEN="$(
+            echo "$RESPONSE" |
+            jq -r '.result.token // empty'
+          )"
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+
+            echo "ERROR: pCloudy authentication failed"
+
+            cat device-pcloudy-auth.json
+
+            exit 1
+
+          fi
+
+          echo "::add-mask::$TOKEN"
+
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+          echo "Fresh pCloudy authentication successful"
+
+
+      # --------------------------------------------------------
+      # Validate customer devices.json
       # --------------------------------------------------------
 
       - name: Validate customer device configuration
@@ -597,7 +665,8 @@ jobs:
           jq empty "$DEVICES_FILE"
 
           DEVICE_COUNT="$(
-            jq '[.devices[]? | select(.enabled == true)] | length' \
+            jq \
+              '[.devices[]? | select(.enabled == true)] | length' \
               "$DEVICES_FILE"
           )"
 
@@ -612,6 +681,7 @@ jobs:
           echo "Enabled devices: $DEVICE_COUNT"
 
           echo ""
+
           echo "Selected devices:"
 
           jq -r '
@@ -622,7 +692,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Sequential Appium + Performance Test
+      # Run Sequential Appium + Performance
       # --------------------------------------------------------
 
       - name: Run Appium sequentially with performance
@@ -633,7 +703,7 @@ jobs:
 
           PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
 
-          PCLOUDY_TOKEN: ${{ needs.pcloudy.outputs.token }}
+          PCLOUDY_TOKEN: ${{ steps.device-auth.outputs.token }}
 
           APP_PACKAGE: com.epam.mobitru
 
@@ -647,14 +717,50 @@ jobs:
 
           set -euo pipefail
 
-          mkdir -p results
-
-          mkdir -p performance
-
-
           echo "=========================================="
           echo "Starting sequential performance execution"
           echo "=========================================="
+
+
+          # ==================================================
+          # Verify fresh token
+          # ==================================================
+
+          if [ -z "${PCLOUDY_TOKEN:-}" ]; then
+
+            echo "ERROR: PCLOUDY_TOKEN is empty"
+
+            exit 1
+
+          fi
+
+          echo "Fresh pCloudy token received successfully"
+
+
+          # ==================================================
+          # Verify required files
+          # ==================================================
+
+          if [ ! -f "pcloudy-devices.json" ]; then
+
+            echo "ERROR: pcloudy-devices.json not found"
+
+            exit 1
+
+          fi
+
+          if [ ! -f "firebase-app.apk" ]; then
+
+            echo "ERROR: firebase-app.apk not found"
+
+            exit 1
+
+          fi
+
+
+          mkdir -p results
+
+          mkdir -p performance
 
 
           DEVICES_FILE="config/devices.json"
@@ -695,7 +801,6 @@ jobs:
 
             mkdir -p "$DEVICE_DIR"
 
-
             echo "Result directory: $DEVICE_DIR"
 
 
@@ -704,6 +809,7 @@ jobs:
             # ==================================================
 
             echo ""
+
             echo "[1/7] Finding device in pCloudy response"
 
 
@@ -725,7 +831,7 @@ jobs:
 
               echo "ERROR: Device not found in pCloudy device list"
 
-              echo "Requested:"
+              echo "Requested device:"
               echo "$DEVICE_NAME"
 
               exit 1
@@ -741,6 +847,7 @@ jobs:
             # ==================================================
 
             echo ""
+
             echo "[2/7] Booking device"
 
 
@@ -788,6 +895,9 @@ jobs:
 
               echo "ERROR: Could not extract reservation ID"
 
+              echo ""
+              echo "pCloudy booking response:"
+
               cat "${DEVICE_DIR}/book-response.json"
 
               exit 1
@@ -803,6 +913,7 @@ jobs:
             # ==================================================
 
             echo ""
+
             echo "[3/7] Starting performance data"
 
 
@@ -828,24 +939,23 @@ jobs:
 
             echo "Performance monitoring started"
 
-            echo ""
-            echo "Performance configuration:"
-            echo "  Package: ${APP_PACKAGE}"
-            echo "  RID: ${RID}"
-            echo "  Enabled: true"
-
 
             # ==================================================
             # 4. Run Appium Test
             # ==================================================
 
             echo ""
+
             echo "[4/7] Running Appium lifecycle test"
 
 
             export PCLOUDY_DEVICE="$DEVICE_NAME"
 
             export PCLOUDY_APP_NAME="firebase-app.apk"
+
+            export APP_PACKAGE="${APP_PACKAGE}"
+
+            export PCLOUDY_ENABLE_PERFORMANCE_DATA="true"
 
 
             set +e
@@ -874,6 +984,7 @@ jobs:
             # ==================================================
 
             echo ""
+
             echo "[5/7] Getting performance file list"
 
 
@@ -904,6 +1015,7 @@ jobs:
             # ==================================================
 
             echo ""
+
             echo "[6/7] Downloading performance files"
 
 
@@ -969,6 +1081,7 @@ jobs:
             # ==================================================
 
             echo ""
+
             echo "[7/7] Releasing device"
 
 
@@ -1012,7 +1125,8 @@ jobs:
             if [ "$TEST_EXIT_CODE" -ne 0 ]; then
 
               echo ""
-              echo "WARNING: Appium test failed"
+
+              echo "WARNING: Appium test failed on $DEVICE_NAME"
 
               echo "Continuing to next configured device..."
 
@@ -1023,7 +1137,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Upload Results
+      # Upload all results
       # --------------------------------------------------------
 
       - name: Upload Appium and Performance Results
@@ -1043,5 +1157,6 @@ jobs:
             pcloudy-devices.json
             pcloudy-auth.json
             pcloudy-upload.json
+            device-pcloudy-auth.json
 
           if-no-files-found: warn
