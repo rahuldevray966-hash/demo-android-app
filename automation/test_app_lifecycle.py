@@ -32,6 +32,7 @@ PCLOUDY_APPIUM_URL = (
     "https://device.pcloudy.com/appiumcloud/wd/hub"
 )
 
+
 # ============================================================
 # Performance Data
 #
@@ -100,6 +101,20 @@ def create_driver():
     )
 
     # ========================================================
+    # Appium Performance Capabilities
+    # ========================================================
+
+    options.set_capability(
+        "appium:instrumentAppPerformance",
+        True
+    )
+
+    options.set_capability(
+        "appium:appPerformance",
+        True
+    )
+
+    # ========================================================
     # Nested pCloudy Options (W3C Compliant)
     # ========================================================
 
@@ -132,6 +147,12 @@ def create_driver():
     print(f"Package          : {APP_PACKAGE}")
     print(
         f"Performance Data : {PERFORMANCE_DATA}"
+    )
+    print(
+        "Appium Instrument : True"
+    )
+    print(
+        "App Performance   : True"
     )
     print(
         "=========================================="
@@ -215,6 +236,12 @@ def test_app_lifecycle():
         print(f"Package          : {APP_PACKAGE}")
         print(
             f"Performance Data : {PERFORMANCE_DATA}"
+        )
+        print(
+            "Appium Instrument : True"
+        )
+        print(
+            "App Performance   : True"
         )
         print(
             "=========================================="
@@ -362,22 +389,39 @@ def test_app_lifecycle():
                 "Ending Appium session"
             )
 
+            # =================================================
+            # Retrieve pCloudy Report Link
+            # =================================================
+
             try:
 
-                # Retrieve the pCloudy web report URL programmatically
-                report_link = driver.execute_script("Pcloudy_getReportLink")
+                report_link = driver.execute_script(
+                    "Pcloudy_getReportLink"
+                )
+
                 print("")
-                print("==================================================")
-                print("PCLOUDY LIVE PERFORMANCE REPORT LINK:")
+                print(
+                    "=================================================="
+                )
+                print(
+                    "PCLOUDY LIVE PERFORMANCE REPORT LINK:"
+                )
                 print(report_link)
-                print("==================================================")
+                print(
+                    "=================================================="
+                )
                 print("")
 
             except Exception as r_exc:
 
                 print(
-                    f"Warning: Could not retrieve report link programmatically: {r_exc}"
+                    "Warning: Could not retrieve "
+                    f"report link programmatically: {r_exc}"
                 )
+
+            # =================================================
+            # Quit Appium Session
+            # =================================================
 
             try:
 
