@@ -673,8 +673,8 @@ jobs:
           echo "rid=$RID" >> "$GITHUB_OUTPUT"
 
 
-      # ========================================================
-      # STAGE 12 - Install APK using V2 API
+            # ========================================================
+      # STAGE 12 - Install APK using pCloudy V2 API
       # ========================================================
 
       - name: STAGE 12 - Install APK on pCloudy device
@@ -683,6 +683,8 @@ jobs:
 
         env:
           PCLOUDY_TOKEN: ${{ steps.pcloudy-auth.outputs.token }}
+          PCLOUDY_EMAIL: ${{ secrets.PCLOUDY_EMAIL }}
+          PCLOUDY_ACCESS_KEY: ${{ secrets.PCLOUDY_ACCESS_KEY }}
           RID: ${{ steps.book-device.outputs.rid }}
           UPLOAD_FILENAME: ${{ steps.pcloudy-upload.outputs.filename }}
 
@@ -699,19 +701,49 @@ jobs:
           echo "Filename:"
           echo "$UPLOAD_FILENAME"
 
-          if [ -z "$UPLOAD_FILENAME" ]; then
-            echo "ERROR: Uploaded APK filename is empty"
+          if [ -z "$RID" ]; then
+            echo "ERROR: Reservation ID is empty"
             exit 1
           fi
 
+          if [ -z "$PCLOUDY_TOKEN" ]; then
+            echo "ERROR: pCloudy token is empty"
+            exit 1
+          fi
+
+          if [ -z "$UPLOAD_FILENAME" ]; then
+            echo "ERROR: Uploaded filename is empty"
+            exit 1
+          fi
+
+          echo "::add-mask::$PCLOUDY_TOKEN"
+          echo "::add-mask::$PCLOUDY_ACCESS_KEY"
+
+          # ----------------------------------------------------
+          # IMPORTANT:
+          # pCloudy V2 Install API expects token as HEADER
+          # and Basic authentication.
+          # ----------------------------------------------------
+
+          echo ""
+          echo "Install request:"
+
+          jq -n \
+            --argjson rid "$RID" \
+            --arg filename "$UPLOAD_FILENAME" \
+            '{
+              rid: $rid,
+              filename: $filename,
+              appInstallOnly: false,
+              trustApp: true
+            }'
+
           INSTALL_PAYLOAD="$(
             jq -n \
-              --arg token "$PCLOUDY_TOKEN" \
               --argjson rid "$RID" \
               --arg filename "$UPLOAD_FILENAME" \
               '{
                 rid: $rid,
-                token: $token,
                 filename: $filename,
                 appInstallOnly: false,
                 trustApp: true
@@ -719,44 +751,52 @@ jobs:
           )"
 
           echo ""
-          echo "Install request:"
-          echo "$INSTALL_PAYLOAD" | jq 'del(.token)'
+          echo "Calling pCloudy V2 Install API..."
 
-          INSTALL_RESPONSE="$(
+          HTTP_CODE="$(
             curl \
+              --http1.1 \
               --silent \
               --show-error \
-              --fail-with-body \
-              --location \
-              --retry 3 \
-              --retry-delay 3 \
+              --output pcloudy-install-app.json \
+              --write-out "%{http_code}" \
               --request POST \
+              --header "token: ${PCLOUDY_TOKEN}" \
               --header "Content-Type: application/json" \
+              --user "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
               --data "$INSTALL_PAYLOAD" \
               "https://device.pcloudy.com/api/v2/install-app"
           )"
 
-          printf '%s\n' "$INSTALL_RESPONSE" > pcloudy-install-app.json
+          echo ""
+          echo "HTTP Status:"
+          echo "$HTTP_CODE"
 
           echo ""
           echo "Install response:"
-          echo "$INSTALL_RESPONSE" | jq '.' || cat pcloudy-install-app.json
+          cat pcloudy-install-app.json | jq '.' \
+            || cat pcloudy-install-app.json
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo ""
+            echo "ERROR: pCloudy V2 APK installation failed."
+            exit 1
+          fi
 
           INSTALL_STATUS="$(
-            printf '%s' "$INSTALL_RESPONSE" |
-            jq -r '.status // empty'
+            jq -r '.status // empty' pcloudy-install-app.json
           )"
 
           if [ "$INSTALL_STATUS" != "success" ]; then
             echo ""
-            echo "ERROR: pCloudy APK installation failed."
-            cat pcloudy-install-app.json
+            echo "ERROR: pCloudy reported installation failure."
             exit 1
           fi
 
           echo ""
-          echo "APK installed successfully."
-
+          echo "=========================================="
+          echo "APK installed successfully"
+          echo "=========================================="
 
       # ========================================================
       # STAGE 13 - Start Performance Data
