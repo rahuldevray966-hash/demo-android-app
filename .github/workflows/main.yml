@@ -540,19 +540,23 @@ jobs:
 
           UPLOAD_FILENAME="$(
             jq -r '
+              .result.file //
               .result.file_name //
               .result.filename //
               .result.fileName //
               .result.application_name //
               .result.applicationName //
               .result.name //
+              .file //
               empty
             ' pcloudy-upload.json |
             head -n 1
           )"
 
           if [ -z "$UPLOAD_FILENAME" ] || [ "$UPLOAD_FILENAME" = "null" ]; then
-            UPLOAD_FILENAME="firebase-app.apk"
+            echo "ERROR: Failed to extract uploaded filename from pCloudy response"
+            cat pcloudy-upload.json
+            exit 1
           fi
 
           echo ""
@@ -719,39 +723,33 @@ jobs:
           echo "::add-mask::$PCLOUDY_TOKEN"
           echo "::add-mask::$PCLOUDY_ACCESS_KEY"
 
-          # ----------------------------------------------------
-          # IMPORTANT:
-          # pCloudy V2 Install API expects token as HEADER
-          # and Basic authentication.
-          # ----------------------------------------------------
-
           echo ""
           echo "Install request:"
 
           jq -n \
+            --arg token "$PCLOUDY_TOKEN" \
             --argjson rid "$RID" \
             --arg filename "$UPLOAD_FILENAME" \
             '{
+              token: $token,
               rid: $rid,
-              filename: $filename,
-              appInstallOnly: false,
-              trustApp: true
-            }'
+              filename: $filename
+            }' | jq 'del(.token)'
 
           INSTALL_PAYLOAD="$(
             jq -n \
+              --arg token "$PCLOUDY_TOKEN" \
               --argjson rid "$RID" \
               --arg filename "$UPLOAD_FILENAME" \
               '{
+                token: $token,
                 rid: $rid,
-                filename: $filename,
-                appInstallOnly: false,
-                trustApp: true
+                filename: $filename
               }'
           )"
 
           echo ""
-          echo "Calling pCloudy V2 Install API..."
+          echo "Calling pCloudy Install API..."
 
           HTTP_CODE="$(
             curl \
@@ -763,10 +761,26 @@ jobs:
               --request POST \
               --header "token: ${PCLOUDY_TOKEN}" \
               --header "Content-Type: application/json" \
-              --user "${PCLOUDY_EMAIL}:${PCLOUDY_ACCESS_KEY}" \
               --data "$INSTALL_PAYLOAD" \
-              "https://device.pcloudy.com/api/v2/install-app"
+              "https://device.pcloudy.com/api/v2/install_app"
           )"
+
+          if [ "$HTTP_CODE" -eq 404 ] || [ "$HTTP_CODE" -ge 400 ]; then
+            echo "v2 install returned HTTP $HTTP_CODE, trying fallback to /api/install_app..."
+            HTTP_CODE="$(
+              curl \
+                --http1.1 \
+                --silent \
+                --show-error \
+                --output pcloudy-install-app.json \
+                --write-out "%{http_code}" \
+                --request POST \
+                --header "token: ${PCLOUDY_TOKEN}" \
+                --header "Content-Type: application/json" \
+                --data "$INSTALL_PAYLOAD" \
+                "https://device.pcloudy.com/api/install_app"
+            )"
+          fi
 
           echo ""
           echo "HTTP Status:"
@@ -779,12 +793,17 @@ jobs:
 
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
             echo ""
-            echo "ERROR: pCloudy V2 APK installation failed."
+            echo "ERROR: pCloudy APK installation failed with HTTP $HTTP_CODE."
             exit 1
           fi
 
           INSTALL_STATUS="$(
-            jq -r '.status // empty' pcloudy-install-app.json
+            jq -r '
+              .status //
+              .result.status //
+              (if (.code == 200 or .result.code == 200) then "success" else empty end) //
+              empty
+            ' pcloudy-install-app.json | tr '[:upper:]' '[:lower:]'
           )"
 
           if [ "$INSTALL_STATUS" != "success" ]; then
@@ -902,8 +921,8 @@ jobs:
 
           PCLOUDY_DEVICE: ${{ steps.selected-device.outputs.device }}
 
-          PCLOUDY_APPLICATION_NAME: firebase-app.apk
-          PCLOUDY_APP_NAME: firebase-app.apk
+          PCLOUDY_APPLICATION_NAME: ${{ steps.pcloudy-upload.outputs.filename }}
+          PCLOUDY_APP_NAME: ${{ steps.pcloudy-upload.outputs.filename }}
 
           APP_PACKAGE: ${{ env.APP_PACKAGE }}
 
