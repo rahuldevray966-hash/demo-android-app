@@ -82,12 +82,12 @@ def create_driver():
 
     options.set_capability(
         "appium:noReset",
-        false
+        False
     )
 
     options.set_capability(
         "appium:autoGrantPermissions",
-        true
+        True
     )
 
     options.set_capability(
@@ -106,12 +106,12 @@ def create_driver():
 
     options.set_capability(
         "appium:instrumentAppPerformance",
-        true
+        True
     )
 
     options.set_capability(
         "appium:appPerformance",
-        true
+        True
     )
 
     # ========================================================
@@ -124,9 +124,9 @@ def create_driver():
         "pCloudy_ApplicationName": PCLOUDY_APP_NAME,
         "pCloudy_DeviceFullName": DEVICE_NAME,
         "pCloudy_DurationInMinutes": 10,
-        "pCloudy_EnableVideo": false,
+        "pCloudy_EnableVideo": False,
         "pCloudy_EnablePerformanceData": PERFORMANCE_DATA,
-        "pCloudy_EnableDeviceLogs": false,
+        "pCloudy_EnableDeviceLogs": False,
         "appiumVersion": "3.1.1"
     }
 
