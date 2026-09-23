@@ -20,6 +20,11 @@ DEVICE_NAME = os.getenv(
     ""
 )
 
+RID = os.getenv(
+    "RID",
+    ""
+)
+
 PCLOUDY_EMAIL = os.environ["PCLOUDY_EMAIL"]
 PCLOUDY_ACCESS_KEY = os.environ["PCLOUDY_ACCESS_KEY"]
 
@@ -54,9 +59,9 @@ PERFORMANCE_DATA = os.getenv(
 
 def create_driver():
 
-    if not DEVICE_NAME:
+    if not DEVICE_NAME and not RID:
         raise RuntimeError(
-            "PCLOUDY_DEVICE is empty"
+            "Both PCLOUDY_DEVICE and RID are empty"
         )
 
     options = UiAutomator2Options()
@@ -122,13 +127,17 @@ def create_driver():
         "pCloudy_Username": PCLOUDY_EMAIL,
         "pCloudy_ApiKey": PCLOUDY_ACCESS_KEY,
         "pCloudy_ApplicationName": PCLOUDY_APP_NAME,
-        "pCloudy_DeviceFullName": DEVICE_NAME,
-        "pCloudy_DurationInMinutes": 10,
+        "pCloudy_DurationInMinutes": 5,
         "pCloudy_EnableVideo": False,
         "pCloudy_EnablePerformanceData": PERFORMANCE_DATA,
         "pCloudy_EnableDeviceLogs": False,
         "appiumVersion": "3.1.1"
     }
+
+    if RID:
+        pcloudy_opts["pCloudy_ReservationId"] = int(RID)
+    else:
+        pcloudy_opts["pCloudy_DeviceFullName"] = DEVICE_NAME
 
     options.set_capability(
         "pcloudy:options",
@@ -144,6 +153,8 @@ def create_driver():
     print("Starting pCloudy Appium session")
     print("==========================================")
     print(f"Device           : {DEVICE_NAME}")
+    if RID:
+        print(f"Reservation ID   : {RID}")
     print(f"Package          : {APP_PACKAGE}")
     print(
         f"Performance Data : {PERFORMANCE_DATA}"

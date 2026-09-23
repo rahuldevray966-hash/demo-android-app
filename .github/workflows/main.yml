@@ -930,6 +930,8 @@ jobs:
 
           PCLOUDY_ENABLE_PERFORMANCE_DATA: "true"
 
+          RID: ${{ steps.book-device.outputs.rid }}
+
         run: |
           set -euo pipefail
 
@@ -938,6 +940,7 @@ jobs:
           echo "=========================================="
 
           echo "Device : $PCLOUDY_DEVICE"
+          echo "RID    : ${RID:-none}"
           echo "App    : $PCLOUDY_APP_NAME"
           echo "Package: $APP_PACKAGE"
           echo "URL    : $PCLOUDY_APPIUM_URL"
