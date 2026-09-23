@@ -106,12 +106,12 @@ def create_driver():
 
     options.set_capability(
         "appium:instrumentAppPerformance",
-        True
+        true
     )
 
     options.set_capability(
         "appium:appPerformance",
-        True
+        true
     )
 
     # ========================================================
