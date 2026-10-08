@@ -22,10 +22,72 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ==========================================================
+      # STAGE 1 - CHECKOUT REPOSITORY
+      # ==========================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ==========================================================
+      # STAGE 2 - VERIFY REPOSITORY FILES
+      # ==========================================================
+
+      - name: Verify repository files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "Verify Repository Files"
+          echo "=========================================="
+
+          echo "Workspace: $GITHUB_WORKSPACE"
+          echo "Commit: $(git rev-parse HEAD)"
+          echo "Branch/Ref: ${GITHUB_REF_NAME:-unknown}"
+
+          echo ""
+          echo "Checking required files..."
+
+          test -f .github/config/devices.json || {
+            echo "ERROR: .github/config/devices.json not found"
+            exit 1
+          }
+
+          test -f requirements.txt || {
+            echo "ERROR: requirements.txt not found"
+            exit 1
+          }
+
+          test -f .github/automation/test_app_lifecycle.py || {
+            echo "ERROR: .github/automation/test_app_lifecycle.py not found"
+            exit 1
+          }
+
+          echo ""
+          echo "Required files found:"
+          echo "  .github/config/devices.json"
+          echo "  requirements.txt"
+          echo "  .github/automation/test_app_lifecycle.py"
+
+          echo ""
+          echo "Repository files verified successfully."
+
+      # ==========================================================
+      # STAGE 3 - FIREBASE AUTHENTICATION
+      # ==========================================================
+
       - name: Authenticate with Firebase
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      # ==========================================================
+      # STAGE 4 - FIREBASE ACCESS TOKEN
+      # ==========================================================
 
       - name: Firebase - Get Access Token
         id: firebase-token
@@ -48,6 +110,10 @@ jobs:
           echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
 
           echo "Firebase authentication successful"
+
+      # ==========================================================
+      # STAGE 5 - FIREBASE LATEST RELEASE
+      # ==========================================================
 
       - name: Firebase - Fetch Latest Release
         id: firebase-release
@@ -139,6 +205,10 @@ jobs:
           echo "Latest Firebase release:"
           echo "$RELEASE_NAME"
 
+      # ==========================================================
+      # STAGE 6 - DOWNLOAD APK
+      # ==========================================================
+
       - name: Firebase - Download APK
         shell: bash
         env:
@@ -175,6 +245,10 @@ jobs:
 
           ls -lh firebase-app.apk
 
+      # ==========================================================
+      # STAGE 7 - VERIFY APK
+      # ==========================================================
+
       - name: Verify APK
         shell: bash
         run: |
@@ -195,7 +269,11 @@ jobs:
 
           echo "APK size: ${APK_SIZE} bytes"
           echo "APK verification successful"
-          
+
+      # ==========================================================
+      # STAGE 8 - PCLOUDY AUTHENTICATION
+      # ==========================================================
+
       - name: pCloudy Authentication
         id: pcloudy-auth
         shell: bash
@@ -246,8 +324,13 @@ jobs:
 
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
           echo "pCloudy authentication successful"
-      
+
+      # ==========================================================
+      # STAGE 9 - FETCH TARGET DEVICES
+      # ==========================================================
+
       - name: Fetch Target Devices
         shell: bash
         env:
@@ -290,6 +373,10 @@ jobs:
             | "\(.full_name) | \(.display_name) | Android \(.version)"
           ' pcloudy-devices.json || true
 
+      # ==========================================================
+      # STAGE 10 - VALIDATE TARGET DEVICES
+      # ==========================================================
+
       - name: Validate Target Devices
         shell: bash
         run: |
@@ -301,12 +388,31 @@ jobs:
 
           DEVICES_FILE=".github/config/devices.json"
 
-          test -f "$DEVICES_FILE" || {
+          if [ ! -f "$DEVICES_FILE" ]; then
             echo "ERROR: $DEVICES_FILE not found"
+            echo ""
+            echo "Current working directory:"
+            pwd
+            echo ""
+            echo "Repository root:"
+            ls -la
+            echo ""
+            echo ".github directory:"
+            ls -la .github || true
+            echo ""
+            echo ".github/config directory:"
+            ls -la .github/config || true
             exit 1
-          }
+          fi
 
-          jq empty "$DEVICES_FILE"
+          echo "Device configuration found:"
+          echo "$DEVICES_FILE"
+
+          if ! jq empty "$DEVICES_FILE"; then
+            echo "ERROR: Invalid JSON in $DEVICES_FILE"
+            cat "$DEVICES_FILE"
+            exit 1
+          fi
 
           ENABLED_COUNT="$(
             jq '[.devices[]? | select(.enabled == true)] | length' \
@@ -318,12 +424,20 @@ jobs:
             exit 1
           fi
 
+          echo ""
           echo "Enabled devices: $ENABLED_COUNT"
+          echo ""
 
           jq -r \
-            '.devices[]? | select(.enabled == true) | .name' \
+            '.devices[]? |
+             select(.enabled == true) |
+             .name' \
             "$DEVICES_FILE"
-            
+
+      # ==========================================================
+      # STAGE 11 - UPLOAD APK TO PCLOUDY
+      # ==========================================================
+
       - name: Upload APK to pCloudy
         id: pcloudy-upload
         shell: bash
@@ -335,6 +449,11 @@ jobs:
           echo "=========================================="
           echo "Upload APK to pCloudy"
           echo "=========================================="
+
+          if [ ! -s firebase-app.apk ]; then
+            echo "ERROR: firebase-app.apk does not exist or is empty"
+            exit 1
+          fi
 
           HTTP_CODE="$(
             curl \
@@ -396,15 +515,27 @@ jobs:
 
           echo "APK uploaded successfully"
 
+      # ==========================================================
+      # STAGE 12 - SETUP PYTHON
+      # ==========================================================
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      # ==========================================================
+      # STAGE 13 - INSTALL APPIUM DEPENDENCIES
+      # ==========================================================
+
       - name: Install Appium dependencies
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "=========================================="
+          echo "Install Appium dependencies"
+          echo "=========================================="
 
           python -m pip install --upgrade pip
 
@@ -418,6 +549,10 @@ jobs:
           echo ""
           echo "Installed packages:"
           pip list
+
+      # ==========================================================
+      # STAGE 14 - RUN SEQUENTIAL TESTS
+      # ==========================================================
 
       - name: Run Sequential Tests
         shell: bash
@@ -440,6 +575,11 @@ jobs:
 
           if [ -z "${PCLOUDY_APPLICATION_NAME:-}" ]; then
             echo "ERROR: pCloudy uploaded application name is empty"
+            exit 1
+          fi
+
+          if [ ! -f ".github/automation/test_app_lifecycle.py" ]; then
+            echo "ERROR: Appium test file not found"
             exit 1
           fi
 
@@ -475,6 +615,8 @@ jobs:
 
             CURRENT_DEVICES_FILE="performance-results/${SAFE_NAME}-availability.json"
 
+            echo "Checking device availability..."
+
             if ! curl \
               --silent \
               --show-error \
@@ -497,6 +639,7 @@ jobs:
               printf '%s\t%s\t%s\n' \
                 "$DEVICE_NAME" "$STATUS" "$REASON" >> "$SUMMARY_FILE"
 
+              echo "Device availability API failed."
               continue
             fi
 
@@ -572,6 +715,7 @@ jobs:
                 STATUS="FAILED"
 
                 if grep -qi "ECONNREFUSED" "$LOG_FILE"; then
+
                   REASON="APPIUM_SESSION_CONNECTION_REFUSED"
 
                 elif grep -qi \
@@ -581,7 +725,9 @@ jobs:
                   REASON="APPIUM_SESSION_FAILED"
 
                 else
+
                   REASON="APPIUM_TEST_FAILED"
+
                 fi
 
                 FAILED=$((FAILED + 1))
@@ -597,18 +743,28 @@ jobs:
 
           done < <(
             jq -r \
-              '.devices[]? | select(.enabled == true) | .name' \
+              '.devices[]? |
+               select(.enabled == true) |
+               .name' \
               .github/config/devices.json
           )
 
+          # ======================================================
+          # FINAL STATUS
+          # ======================================================
+
           if [ "$FAILED" -gt 0 ]; then
+
             FINAL_STATUS="FAILED"
 
           elif [ "$PASSED" -eq 0 ]; then
+
             FINAL_STATUS="NO_TESTS_EXECUTED"
 
           else
+
             FINAL_STATUS="SUCCESS"
+
           fi
 
           {
@@ -630,20 +786,31 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo ""
-          echo "Per-device summary:"
+          echo "=========================================="
+          echo "Per-device summary"
+          echo "=========================================="
+
           column -t -s $'\t' "$SUMMARY_FILE" || cat "$SUMMARY_FILE"
 
+          echo ""
+
           if [ "$FAILED" -gt 0 ]; then
+
             echo "FINAL_STATUS=FAILED"
             exit 1
 
           elif [ "$PASSED" -eq 0 ]; then
+
             echo "FINAL_STATUS=NO_TESTS_EXECUTED"
             exit 1
 
           fi
 
           echo "FINAL_STATUS=SUCCESS"
+
+      # ==========================================================
+      # STAGE 15 - COLLECT RESULTS
+      # ==========================================================
 
       - name: Collect Results
         if: always()
@@ -667,11 +834,17 @@ jobs:
               performance-results/final-summary.txt
           fi
 
+          echo ""
           echo "Result files:"
+
           find performance-results device-results \
             -maxdepth 2 \
             -type f \
             -print || true
+
+      # ==========================================================
+      # STAGE 16 - UPLOAD TEST RESULTS
+      # ==========================================================
 
       - name: Upload Test Results
         if: always()
@@ -687,4 +860,3 @@ jobs:
             device-results/
           if-no-files-found: warn
           retention-days: 7
-
