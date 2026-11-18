@@ -67,11 +67,17 @@ jobs:
             exit 1
           }
 
+          test -f .github/automation/pcloudy_observability.py || {
+            echo "ERROR: .github/automation/pcloudy_observability.py not found"
+            exit 1
+          }
+
           echo ""
           echo "Required files found:"
           echo "  .github/config/devices.json"
           echo "  requirements.txt"
           echo "  .github/automation/test_app_lifecycle.py"
+          echo "  .github/automation/pcloudy_observability.py"
 
           echo ""
           echo "Repository files verified successfully."
@@ -607,6 +613,8 @@ jobs:
 
             XML_FILE="performance-results/${SAFE_NAME}-junit.xml"
             LOG_FILE="performance-results/${SAFE_NAME}.log"
+            DEVICE_RESULTS_DIR="performance-results/${SAFE_NAME}"
+            mkdir -p "$DEVICE_RESULTS_DIR"
 
             echo ""
             echo "=========================================="
@@ -672,6 +680,9 @@ jobs:
             set +e
 
             PCLOUDY_DEVICE="$DEVICE_NAME" \
+            PCLOUDY_RESULTS_DIR="$DEVICE_RESULTS_DIR" \
+            PCLOUDY_TOKEN="$PCLOUDY_TOKEN" \
+            PCLOUDY_ORIGIN="https://observability-device.pcloudy.com" \
             pytest \
               .github/automation/test_app_lifecycle.py \
               -v -s \
@@ -838,7 +849,7 @@ jobs:
           echo "Result files:"
 
           find performance-results device-results \
-            -maxdepth 2 \
+            -maxdepth 4 \
             -type f \
             -print || true
 
