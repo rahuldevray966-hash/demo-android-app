@@ -5,6 +5,8 @@ import pytest
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
 
+from pcloudy_observability import collect_observability
+
 
 # ============================================================
 # Configuration
@@ -230,6 +232,7 @@ def create_driver():
 def test_app_lifecycle():
 
     driver = None
+    observability_session_id = None
 
     try:
 
@@ -238,6 +241,31 @@ def test_app_lifecycle():
         # ====================================================
 
         driver = create_driver()
+
+        # pCloudy observability APIs require the Appium session ID.
+        try:
+            session_id_result = driver.execute_script(
+                "mobile:session:id",
+                {}
+            )
+            if isinstance(session_id_result, dict):
+                observability_session_id = (
+                    session_id_result.get("sessionId")
+                    or session_id_result.get("session_id")
+                    or session_id_result.get("id")
+                )
+            else:
+                observability_session_id = str(session_id_result).strip()
+
+            if observability_session_id:
+                print("pCloudy observability session ID captured.")
+            else:
+                print("WARNING: mobile:session:id returned an empty value.")
+        except Exception as exc:
+            print(
+                "WARNING: Could not retrieve Appium session ID "
+                f"for observability: {exc}"
+            )
 
         print("")
         print("==========================================")
@@ -425,4 +453,30 @@ def test_app_lifecycle():
                 print(
                     "Warning while closing "
                     f"Appium session: {exc}"
+                )
+
+            # Retrieve observability data after the Appium session ends.
+            if observability_session_id:
+                print("")
+                print("Collecting pCloudy observability data...")
+                collection_result = collect_observability(
+                    session_id=observability_session_id,
+                    output_dir=os.getenv(
+                        "PCLOUDY_RESULTS_DIR",
+                        "performance-results/observability"
+                    ),
+                    token=os.getenv("PCLOUDY_TOKEN", ""),
+                    origin=os.getenv(
+                        "PCLOUDY_ORIGIN",
+                        "https://observability-device.pcloudy.com"
+                    )
+                )
+                print(
+                    "Observability collection status: "
+                    f"{collection_result.get('status', 'UNKNOWN')}"
+                )
+            else:
+                print(
+                    "WARNING: Observability APIs were not called "
+                    "because the Appium session ID was unavailable."
                 )
