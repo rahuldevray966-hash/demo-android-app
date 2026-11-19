@@ -242,20 +242,34 @@ def test_app_lifecycle():
 
         driver = create_driver()
 
-        # pCloudy observability APIs require the Appium session ID.
+        # Capture both session ID sources so they can be compared in CI logs.
+        # The pCloudy documentation specifies mobile:session:id for Observability.
+        appium_driver_session_id = getattr(driver, "session_id", None)
+        print("\\n========== SESSION ID DEBUG ==========")
+        print(f"Appium driver.session_id: {appium_driver_session_id}")
+
         try:
             session_id_result = driver.execute_script(
                 "mobile:session:id",
                 {}
             )
+            print(f"mobile:session:id raw result: {session_id_result!r}")
+
             if isinstance(session_id_result, dict):
                 observability_session_id = (
                     session_id_result.get("sessionId")
                     or session_id_result.get("session_id")
                     or session_id_result.get("id")
                 )
-            else:
+            elif session_id_result is not None:
                 observability_session_id = str(session_id_result).strip()
+
+            print(
+                "Session ID comparison: "
+                f"{str(appium_driver_session_id) == str(observability_session_id)}"
+            )
+            print(f"Session ID selected for Observability: {observability_session_id}")
+            print("======================================\\n")
 
             if observability_session_id:
                 print("pCloudy observability session ID captured.")
@@ -459,6 +473,18 @@ def test_app_lifecycle():
             if observability_session_id:
                 print("")
                 print("Collecting pCloudy observability data...")
+                print(
+                    "[DEBUG] Session ID passed to collect_observability: "
+                    f"{observability_session_id}"
+                )
+                print(
+                    "[DEBUG] PCLOUDY_TOKEN configured: "
+                    f"{bool(os.getenv('PCLOUDY_TOKEN', '').strip())}"
+                )
+                print(
+                    "[DEBUG] PCLOUDY_ORIGIN: "
+                    f"{os.getenv('PCLOUDY_ORIGIN', 'https://observability-device.pcloudy.com')}"
+                )
                 collection_result = collect_observability(
                     session_id=observability_session_id,
                     output_dir=os.getenv(
