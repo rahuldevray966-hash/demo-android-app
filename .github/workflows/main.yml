@@ -572,8 +572,28 @@ jobs:
           PCLOUDY_APPIUM_URL: ${{ env.PCLOUDY_APPIUM_URL }}
           PCLOUDY_ENABLE_PERFORMANCE_DATA: "true"
           PCLOUDY_DURATION: ${{ env.PCLOUDY_DURATION }}
+          PCLOUDY_ORIGIN: https://observability-device.pcloudy.com
+          PCLOUDY_OBS_URL: https://observability-backend.pcloudy.com
         run: |
           set -uo pipefail
+
+          echo "=========================================="
+          echo "Verify Observability Configuration"
+          echo "=========================================="
+
+          if [ -z "${PCLOUDY_TOKEN:-}" ]; then
+            echo "ERROR: PCLOUDY_TOKEN is missing in the test step"
+            exit 1
+          fi
+
+          if [ -z "${PCLOUDY_ORIGIN:-}" ]; then
+            echo "ERROR: PCLOUDY_ORIGIN is missing in the test step"
+            exit 1
+          fi
+
+          echo "pCloudy token: configured (value hidden)"
+          echo "Observability Origin: ${PCLOUDY_ORIGIN}"
+          echo "Observability Base URL: ${PCLOUDY_OBS_URL}"
 
           echo "=========================================="
           echo "Execute Tests on Devices"
@@ -682,7 +702,8 @@ jobs:
             PCLOUDY_DEVICE="$DEVICE_NAME" \
             PCLOUDY_RESULTS_DIR="$DEVICE_RESULTS_DIR" \
             PCLOUDY_TOKEN="$PCLOUDY_TOKEN" \
-            PCLOUDY_ORIGIN="https://observability-device.pcloudy.com" \
+            PCLOUDY_ORIGIN="$PCLOUDY_ORIGIN" \
+            PCLOUDY_OBS_URL="$PCLOUDY_OBS_URL" \
             pytest \
               .github/automation/test_app_lifecycle.py \
               -v -s \
