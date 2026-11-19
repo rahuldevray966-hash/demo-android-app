@@ -35,6 +35,15 @@ def _write_json(path, data):
 
 def _post(url, token, origin, session_id):
     body = json.dumps({"sessionId": session_id}).encode("utf-8")
+
+    # Never print the authentication token. Log only request metadata.
+    print("\\n[OBSERVABILITY][REQUEST]")
+    print(f"URL: {url}")
+    print("Method: POST")
+    print(f"Origin: {origin}")
+    print(f"Session ID: {session_id}")
+    print(f"Request body: {body.decode('utf-8')}")
+
     request = urllib.request.Request(
         url,
         data=body,
@@ -53,6 +62,8 @@ def _post(url, token, origin, session_id):
     except urllib.error.HTTPError as exc:
         status = exc.code
         raw = exc.read().decode("utf-8", errors="replace")
+        print(f"[OBSERVABILITY][HTTP ERROR] Status: {status}")
+        print(f"[OBSERVABILITY][HTTP ERROR] Response: {raw}")
     except Exception as exc:
         return {
             "success": False,
@@ -67,6 +78,10 @@ def _post(url, token, origin, session_id):
         parsed = {"raw_response": raw}
 
     ok = 200 <= status < 300
+    print(f"[OBSERVABILITY][RESPONSE] HTTP Status: {status}")
+    print(f"[OBSERVABILITY][RESPONSE] Body: {raw}")
+    print(f"[OBSERVABILITY][RESPONSE] HTTP success: {ok}")
+
     return {
         "success": ok,
         "http_status": status,
@@ -89,6 +104,24 @@ def collect_observability(session_id, output_dir, token=None, origin=None):
         "results": {},
     }
 
+    print("\\n========== OBSERVABILITY CONFIGURATION ==========")
+    print(f"Base URL: {base_url}")
+    print(f"Origin: {origin}")
+    print(f"Session ID received: {session_id}")
+    print(f"Token configured: {bool(token)}")
+    print(f"Endpoint count: {len(OBSERVABILITY_ENDPOINTS)}")
+    print("================================================\\n")
+
+    if not session_id:
+        summary.update({
+            "status": "FAILED",
+            "error": "session_id is empty; Observability API calls were not sent.",
+            "successCount": 0,
+            "failureCount": len(OBSERVABILITY_ENDPOINTS),
+        })
+        _write_json(out / "observability-summary.json", summary)
+        return {"status": "FAILED", "success_count": 0, "failure_count": 7}
+
     if not token:
         summary.update({
             "status": "FAILED",
@@ -109,10 +142,17 @@ def collect_observability(session_id, output_dir, token=None, origin=None):
         _write_json(out / f"{name}.json", result)
         if result["success"]:
             successes += 1
-            print(f"[OBSERVABILITY] {name}: HTTP {result['http_status']}")
+            print(
+                f"[OBSERVABILITY] {name}: "
+                f"HTTP {result['http_status']} (2xx)"
+            )
         else:
             failures += 1
-            print(f"[OBSERVABILITY] {name}: request failed")
+            print(
+                f"[OBSERVABILITY] {name}: FAILED "
+                f"(HTTP {result.get('http_status')}; "
+                f"{result.get('error')})"
+            )
 
     status = "SUCCESS" if failures == 0 else ("PARTIAL" if successes else "FAILED")
     summary.update({
